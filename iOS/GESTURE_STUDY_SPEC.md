@@ -151,6 +151,51 @@ and its result belongs in `session.json`. Note the separate, already-documented 
 wall clock free-runs when it is off Wi-Fi (seconds of error within minutes) — keep it on Wi-Fi
 for the whole session.
 
+## 8b. BLE advertising from the collector
+
+The app also advertises as a BLE peripheral so the **watch can scan it** and log RSSI on the
+watch's own clock — the architecture HANDOFF §4 settled on (IMU and RSSI sharing one clock),
+but without needing the ESP32 beacon present for this study.
+
+**This does not contradict the earlier decision.** That decision rejected iOS advertising
+because *background* advertising is unscannable from Wear OS: iOS moves service UUIDs into the
+Apple-proprietary overflow area and drops the local name. During an elicitation session the
+app is foregrounded by definition, and foreground advertising goes out in the standard packet,
+which Wear OS can see.
+
+**Design:**
+- `CBPeripheralManager` advertising `CBAdvertisementDataLocalNameKey` +
+  `CBAdvertisementDataServiceUUIDsKey` with a fixed study service UUID.
+- The watch filters on the **service UUID, not the address** — iOS rotates the peripheral
+  address (~15 min) and never exposes a MAC.
+- Advertising runs for the whole session, started with the recorder.
+- `UIApplication.shared.isIdleTimerDisabled = true` while recording. If the screen locks or the
+  app backgrounds, advertising degrades to the overflow area and the watch silently stops
+  seeing it — the same silent-failure class as the orphaned `idevicesyslog` and the offline
+  clock. Surface the peripheral state in the UI; do not assume it.
+- **Keep the existing central/scanner running too.** The two managers coexist, so RSSI is
+  measured at both ends of the same link. That is a reciprocity check, and because both series
+  carry the same fading structure, cross-correlating them estimates the iPad↔watch clock offset
+  from the radio channel itself — an independent check on the sync anchors.
+
+**Three constraints that shape the science:**
+
+1. **The advertising interval is not settable on iOS.** The cadence is system-chosen and may
+   vary. The existing signal model (`ble_model.py`) assumes a ~136 ms slot clock (~6.4 Hz) with
+   an AR(2) resonator at period ≈2.2 slots — and that oscillation is channel hopping *times*
+   the slot cadence. **Those parameters must be re-measured with the iPad as advertiser before
+   any of them are reused.** Do not assume they transfer.
+2. **No custom payload.** Foreground iOS advertising carries local name and service UUIDs only —
+   no manufacturer data, so **no sequence counter**. Dropout therefore stays *statistically
+   inferred* (the 15-21% geometric estimate) rather than directly measured. An ESP32 can carry a
+   counter, which would make dropout exact — a standing argument for keeping the beacon for the
+   dropout/interpolation work even while the iPad serves the gesture study.
+3. **Tx power is neither settable nor reported**, so absolute dBm is not comparable between the
+   iPad and the ESP32. Fine within a session; not poolable across advertiser types.
+
+`session.json` gains `"ble_advertiser": "ipad" | "esp32" | "none"` and the measured advertising
+cadence for the session, so no later analysis can silently pool incomparable sources.
+
 ## 9. Code changes
 
 | file | change |
@@ -161,8 +206,10 @@ for the whole session.
 | `Recorder.swift` | add `_trials.csv`, `_schedule.json`, `_session.json` writers |
 | `GestureClassifier.swift` | later: double-tap, and drag vs scroll by target-follow rather than velocity |
 | `README.md` | rewrite; also correct the stale "PiP / foreground impossible" claim, which the syslog route has since disproved |
+| `BLEAdvertiser.swift` | **new** — CBPeripheralManager, fixed service UUID, state surfaced to the UI |
 
-`TouchLogger.swift` and `BLEScanner.swift` are unchanged.
+`TouchLogger.swift` and `BLEScanner.swift` are unchanged (the scanner keeps running alongside
+the new advertiser).
 
 ## 10. Open questions
 
@@ -173,5 +220,7 @@ for the whole session.
    split into an adults-only phase?
 3. **Do we want a practice block** (uncued, unscored) before the real one, to reduce
    learning effects in the first trials?
-4. **Scroll target.** A scrollable strip inside a 2×2 block is small. Does scroll deserve a
+4. **Advertiser for the main study.** iPad-only is simplest, but loses exact dropout measurement.
+   Run the ESP32 alongside for a few sessions to cross-calibrate the two advertisers?
+5. **Scroll target.** A scrollable strip inside a 2×2 block is small. Does scroll deserve a
    full-screen phase instead?
