@@ -211,6 +211,77 @@ cadence for the session, so no later analysis can silently pool incomparable sou
 `TouchLogger.swift` and `BLEScanner.swift` are unchanged (the scanner keeps running alongside
 the new advertiser).
 
+## 9b. Two platforms, one contract (decided 2026-08-19)
+
+The collector is built for **both iOS and Android**, and runs **both studies** — gesture
+elicitation and the `PILOT_PROTOCOL.md` discrimination pilot — from one engine. A study is just a
+set of trial types plus a cue renderer; `Schedule` and `TrialRunner` are shared.
+
+Android is not optional: **RQ11 asks whether results hold across tablets**, and the family's
+shared device is the Pixel. Collecting only on iPad leaves the deployment target untested.
+
+### The trial list is materialised in the schedule, not generated per platform
+
+`Random(seed:)` in Swift and `kotlin.random.Random(seed)` produce **different sequences from the
+same seed**. If each platform generates its own trial order, the "same seed gives matched
+sequences across participants" property in §5 quietly fails, and cross-platform comparisons — the
+whole point of building Android — compare different designs.
+
+So `schedule.json` carries the **fully expanded trial list**, generated once:
+
+```json
+{"schedule_version": 2, "seed": 20260819, "generated_by": "ios 1.2.0",
+ "trials": [
+   {"i": 0, "type": "target_tap",  "block": [0,1], "direction": null, "picture": "fox"},
+   {"i": 1, "type": "swipe",       "block": [1,0], "direction": "L",  "picture": "owl"},
+   {"i": 2, "type": "water_reach", "block": null,  "direction": null, "picture": null}
+ ]}
+```
+
+Both platforms then only *play back* a list. No PRNG to match, the executed design is recorded
+verbatim, and a schedule can be authored anywhere — including by a Python script in `tools/`.
+
+### The contract both platforms must satisfy
+
+Freeze these; everything else may differ.
+
+| contract item | note |
+|---|---|
+| `schedule.json` | materialised trial list, as above |
+| `_trials.csv`, `_touches_raw.csv`, `_taps.csv`, `_gestures.csv`, `_ble.csv` | identical column names and order |
+| `session.json` | plus `"platform"` and `"app_version"` |
+| trial state machine | ready → cue → act → gap, same defaults |
+| gesture thresholds | same numbers, same units (**points**, not raw device units) |
+
+A conformance check belongs in `tools/`: feed one `schedule.json` to both apps, assert the two
+`_trials.csv` files agree on sequence, and diff the schemas. Cheap, and it catches the drift that
+otherwise appears months later as an unexplained cross-platform effect.
+
+### Platform differences to record, not hide
+
+| | iOS | Android |
+|---|---|---|
+| touch clock | `UITouch.timestamp`, sub-ms | `MotionEvent.getEventTime()`, ms |
+| pressure | `force`, `majorRadius` | `pressure`, `size` — different semantics, **not comparable** |
+| BLE interval | **not settable** | `ADVERTISE_MODE_*` (~100 ms at LOW_LATENCY) |
+| BLE Tx power | not settable or reported | `ADVERTISE_TX_POWER_*`, settable |
+| BLE payload | name + service UUIDs only | **manufacturer data — a sequence counter fits** |
+
+**The last row changes an earlier conclusion.** §8b argued the ESP32 was still needed for exact
+dropout measurement because iOS cannot carry a sequence counter. **Android can.** A Pixel tablet
+advertising with a counter in manufacturer data makes dropout *directly measured* rather than
+inferred from the 15-21% geometric estimate — which may remove the ESP32 dependency for the
+dropout and interpolation work entirely. Worth testing before ordering hardware.
+
+Consequence for analysis: iOS-advertised and Android-advertised sessions are **different radio
+conditions**, not interchangeable. `session.json` records the advertiser and its settings, and
+absolute dBm is never pooled across them.
+
+### Sequencing
+
+Build **iOS first** — the codebase and this spec already exist — then freeze the contract above
+and port to Android against it. Building both in parallel is how the two drift.
+
 ## 10. Open questions
 
 1. **Repetitions per condition.** 2 gives 68 trials / ~7 min. How many sessions per person, and
