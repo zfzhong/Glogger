@@ -14,7 +14,15 @@ import CoreGraphics
 struct GestureThresholds {
     var longPressMs: Double = 500
     var moveDist: Double = 10        // points; getevent used 40 raw units
-    var flingVel: Double = 600       // points/s
+    // Calibrated on iPad Pro 12.9" from session 0824_1043 (4 cued swipes, 4 cued
+    // drags by one person). Measured mean_vel: drags 228-365 pt/s, swipes 453-799.
+    // The old 600 sat INSIDE the swipe class and misread the two slower swipes as
+    // scroll. 420 is the midpoint of the gap, with ~60-90 pt/s margin either side.
+    // Thin evidence (n=4 per class, one participant) - revisit with more people.
+    // Note max_vel separates even better here (drags 826-1400, swipes 2471-3892);
+    // worth evaluating as a rule change, but that must be done on BOTH platforms
+    // together since gesture_parse.py mirrors this logic.
+    var flingVel: Double = 420       // points/s
     var pinchDelta: Double = 20      // points
     var rotateDeg: Double = 15
     static let `default` = GestureThresholds()

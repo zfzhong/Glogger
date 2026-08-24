@@ -24,6 +24,7 @@ final class Recorder: ObservableObject {
     @Published var nTaps = 0
     @Published var nGestures = 0
     @Published var nBle = 0
+    @Published var nImu = 0
     @Published private(set) var sessionDir: URL?
 
     /// Hooks for the study engine (set by ContentView). Called on the main thread.
@@ -37,6 +38,11 @@ final class Recorder: ObservableObject {
     private var bleFile: FileHandle?
 
     private let scanner = BLEScanner()
+    private let motion = MotionLogger()
+    private var accelFile: FileHandle?
+    private var gyroFile: FileHandle?
+    private var magFile: FileHandle?
+    private let imuQueue = DispatchQueue(label: "cmii.imu.write")   // serialises IMU writes
     private let assembler = StrokeAssembler(thr: .default)
     private var touchSlot: [ObjectIdentifier: Int] = [:]   // stable small ids for the raw log
     private var nextSlot = 0
@@ -60,8 +66,13 @@ final class Recorder: ObservableObject {
         gestFile = openFile(dir, "_gestures.csv",    header: GestureRecord.header)
         bleFile  = openFile(dir, "_ble.csv",         header: "wall_ms,name,uuid,rssi")
         trialsFile = openFile(dir, "_trials.csv",    header: TrialRunner.csvHeader)
+        // One file per sensor, matching the watch-side convention (Pixel02_CMII_Accel_*).
+        let imuHeader = "wall_ms,kernel_ts,x,y,z"
+        accelFile = openFile(dir, "_imu_accel.csv", header: imuHeader)   // g, includes gravity
+        gyroFile  = openFile(dir, "_imu_gyro.csv",  header: imuHeader)   // rad/s
+        magFile   = openFile(dir, "_imu_mag.csv",   header: imuHeader)   // microtesla
 
-        nTaps = 0; nGestures = 0; nBle = 0
+        nTaps = 0; nGestures = 0; nBle = 0; nImu = 0
         touchSlot.removeAll(); nextSlot = 0
 
         assembler.onGesture = { [weak self] rec in
@@ -82,6 +93,26 @@ final class Recorder: ObservableObject {
         }
         scanner.start()
 
+        motion.onStatus = { [weak self] s in DispatchQueue.main.async { self?.status = s } }
+        motion.onSample = { [weak self] kind, wall, kts, x, y, z in
+            guard let self else { return }
+            let line = "\(wall),\(fmt6(kts)),\(fmt6(x)),\(fmt6(y)),\(fmt6(z))"
+            // Off the main thread: at 100 Hz x 3 sensors this must not touch UI work.
+            self.imuQueue.async {
+                switch kind {
+                case "accel": self.append(self.accelFile, line)
+                case "gyro":  self.append(self.gyroFile, line)
+                default:      self.append(self.magFile, line)
+                }
+            }
+            // Throttle the counter — publishing 300x/s would stall SwiftUI.
+            if self.motion.nSamples % 25 == 0 {
+                let n = self.motion.nSamples
+                DispatchQueue.main.async { self.nImu = n }
+            }
+        }
+        motion.start()
+
         isRecording = true
         status = "Recording '\(sessionName)'"
     }
@@ -90,9 +121,14 @@ final class Recorder: ObservableObject {
         guard isRecording else { return }
         isRecording = false
         scanner.stop()
-        for f in [tapsFile, rawFile, gestFile, bleFile, trialsFile] { try? f?.close() }
+        motion.stop()
+        nImu = motion.nSamples
+        imuQueue.sync { }                       // drain queued IMU writes before closing
+        for f in [tapsFile, rawFile, gestFile, bleFile, trialsFile,
+                  accelFile, gyroFile, magFile] { try? f?.close() }
         tapsFile = nil; rawFile = nil; gestFile = nil; bleFile = nil; trialsFile = nil
-        status = "Saved \(nTaps) taps, \(nGestures) gestures, \(nBle) BLE → \(sessionName)"
+        accelFile = nil; gyroFile = nil; magFile = nil
+        status = "Saved \(nTaps) taps, \(nGestures) gestures, \(nBle) BLE, \(nImu) IMU → \(sessionName)"
     }
 
     // MARK: - Touch ingestion (called from TouchRecognizer on the main thread)

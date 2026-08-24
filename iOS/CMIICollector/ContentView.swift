@@ -71,7 +71,7 @@ struct ContentView: View {
                 .disabled(recorder.isRecording || recorder.sessionDir == nil)
 
                 Spacer()
-                Text("taps \(recorder.nTaps)   gestures \(recorder.nGestures)   BLE \(recorder.nBle)")
+                Text("taps \(recorder.nTaps)   gest \(recorder.nGestures)   BLE \(recorder.nBle)   IMU \(recorder.nImu)")
                     .font(.system(.callout, design: .monospaced))
                     .foregroundStyle(.secondary)
             }
