@@ -72,7 +72,10 @@ final class TrialRunner: ObservableObject {
     func gesture(_ rec: GestureRecord) {
         guard phase == .cued || phase == .settling else { return }
         collected.append(rec)
-        lastUpMs = rec.wallMs
+        // GestureRecord.wallMs is when the stroke STARTED; the end is start + duration.
+        // Using wallMs directly made first_down_ms == last_up_ms and left every trial
+        // with a zero-width time window - useless for slicing the watch IMU stream.
+        lastUpMs = rec.wallMs + Int(rec.durMs.rounded())
         guard phase == .cued, let s = schedule else { return }
         gen += 1                                   // cancel the cue timeout
         phase = .settling

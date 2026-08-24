@@ -69,7 +69,11 @@ enum GType: String, Codable, CaseIterable {
         case .double_tap: return ["tap"]          // two of them; handled separately
         case .long_press: return ["long_press"]
         case .swipe:      return ["swipe"]
-        case .drag:       return ["scroll", "swipe"]
+        // Only "scroll" (slow displacement). Accepting "swipe" here made the match
+        // flag meaningless: session 0824_0921 trial 0 cued a slow drag, the participant
+        // flicked (200 ms / 167 px vs 1025-1117 ms for the real drags), and it still
+        // scored as a match. The separation is clean, so the check should be strict.
+        case .drag:       return ["scroll"]
         }
     }
 }
