@@ -19,9 +19,10 @@ import Foundation
 import CoreBluetooth
 
 final class BLEAdvertiser: NSObject, CBPeripheralManagerDelegate {
-    /// Custom 128-bit service UUID. The watch should filter on THIS, not on a
-    /// name or address: iOS rotates the peripheral address roughly every 15 min
-    /// and never exposes a MAC.
+    /// Kept for a future custom scanner, but NOT advertised — see start() below.
+    /// Note for any scanner: never key on the address. iOS rotates the peripheral
+    /// address roughly every 15 min and never exposes a MAC, so Slogger's logged
+    /// `device.address` column will change mid-session for this advertiser.
     static let serviceUUID = CBUUID(string: "7E5C0001-9B4D-4F1A-A6E2-3C8D5F2A1B90")
 
     var localName = "CMII-Pad"
@@ -44,10 +45,13 @@ final class BLEAdvertiser: NSObject, CBPeripheralManagerDelegate {
     func peripheralManagerDidUpdateState(_ p: CBPeripheralManager) {
         switch p.state {
         case .poweredOn:
-            p.startAdvertising([
-                CBAdvertisementDataLocalNameKey: localName,
-                CBAdvertisementDataServiceUUIDsKey: [Self.serviceUUID]
-            ])
+            // NAME ONLY - deliberately no service UUID. Slogger filters with
+            // ScanFilter.Builder().setDeviceName(name) (sloggerlib/BLEScanner.kt),
+            // an EXACT match against the Complete Local Name. A 128-bit service
+            // UUID costs 18 of the 31 advertisement bytes and can push the name
+            // into the scan response, where the filter may never see it. The UUID
+            // buys nothing here because nothing filters on it.
+            p.startAdvertising([CBAdvertisementDataLocalNameKey: localName])
         case .poweredOff:   onStatus?("advertise: Bluetooth off")
         case .unauthorized: onStatus?("advertise: Bluetooth not permitted")
         case .unsupported:  onStatus?("advertise: unsupported on this device")
