@@ -8,7 +8,11 @@ import UIKit
 
 struct ContentView: View {
     @EnvironmentObject var recorder: Recorder
+    @StateObject private var runner = TrialRunner()
     @State private var showShare = false
+    @State private var studyMode = true
+    @State private var preset: Preset = .demo
+    @State private var seedText = "20260826"
 
     var body: some View {
         VStack(spacing: 0) {
@@ -18,6 +22,18 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(TouchLoggerView(recorder: recorder))   // app-wide passive capture
+        .onAppear {
+            // Route touches and classified gestures into the trial state machine.
+            recorder.onTouchDown = { [weak runner] wall in runner?.touchDown(wallMs: wall) }
+            recorder.onGestureRecord = { [weak runner] rec in runner?.gesture(rec) }
+            runner.onRow = { [weak recorder] row in recorder?.writeTrialRow(row) }
+            UIApplication.shared.isIdleTimerDisabled = true   // never sleep mid-session
+            // Test hook: lets a simulator run drive the study without a human tap.
+            if ProcessInfo.processInfo.arguments.contains("-autostart") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { startStudy() }
+            }
+        }
+        .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
         .sheet(isPresented: $showShare) {
             if let dir = recorder.sessionDir {
                 ShareSheet(items: csvURLs(in: dir))
@@ -63,13 +79,45 @@ struct ContentView: View {
                 Circle().fill(recorder.isRecording ? .red : .gray).frame(width: 10, height: 10)
                 Text(recorder.status).font(.callout).foregroundStyle(.secondary)
                 Spacer()
-                Picker("Phase", selection: $recorder.studyPhase) {
-                    Text("1 · Browse").tag(0)
-                    Text("2 · Type").tag(1)
-                    Text("3 · Tap grid").tag(2)
+                Picker("Mode", selection: $studyMode) {
+                    Text("Guided study").tag(true)
+                    Text("Free phases").tag(false)
                 }
                 .pickerStyle(.segmented)
-                .frame(width: 340)
+                .frame(width: 260)
+                .disabled(runner.isRunning)
+
+                if studyMode {
+                    Picker("Preset", selection: $preset) {
+                        ForEach(Preset.allCases) { p in Text(p.title).tag(p) }
+                    }
+                    .pickerStyle(.menu)
+                    .disabled(runner.isRunning)
+
+                    TextField("seed", text: $seedText)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 100)
+                        .disabled(runner.isRunning)
+
+                    if runner.isRunning {
+                        Button(role: .destructive) { runner.abort() } label: {
+                            Label("Stop study", systemImage: "xmark.circle.fill")
+                        }
+                    } else {
+                        Button { startStudy() } label: {
+                            Label("Start study", systemImage: "play.fill")
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                } else {
+                    Picker("Phase", selection: $recorder.studyPhase) {
+                        Text("1 · Browse").tag(0)
+                        Text("2 · Type").tag(1)
+                        Text("3 · Tap grid").tag(2)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 300)
+                }
             }
         }
         .padding(12)
@@ -77,7 +125,23 @@ struct ContentView: View {
 
     // MARK: Phase screens
 
+    private func startStudy() {
+        let seed = UInt64(seedText.trimmingCharacters(in: .whitespaces)) ?? 20260826
+        let s = Schedule.make(preset: preset, seed: seed)
+        if !recorder.isRecording { recorder.start() }
+        recorder.writeSessionFiles(schedule: s, preset: preset.rawValue)
+        runner.start(s)
+    }
+
     @ViewBuilder private var phaseContent: some View {
+        if studyMode {
+            StudyView(runner: runner)
+        } else {
+            freePhaseContent
+        }
+    }
+
+    @ViewBuilder private var freePhaseContent: some View {
         switch recorder.studyPhase {
         case 0: BrowsePhase()
         case 1: TypePhase()

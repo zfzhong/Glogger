@@ -26,7 +26,12 @@ final class Recorder: ObservableObject {
     @Published var nBle = 0
     @Published private(set) var sessionDir: URL?
 
+    /// Hooks for the study engine (set by ContentView). Called on the main thread.
+    var onTouchDown: ((Int) -> Void)?
+    var onGestureRecord: ((GestureRecord) -> Void)?
+
     private var tapsFile: FileHandle?
+    private var trialsFile: FileHandle?
     private var rawFile: FileHandle?
     private var gestFile: FileHandle?
     private var bleFile: FileHandle?
@@ -54,6 +59,7 @@ final class Recorder: ObservableObject {
         rawFile  = openFile(dir, "_touches_raw.csv", header: "wall_ms,kernel_ts,touch_id,phase,x,y,force,major_radius,study_phase")
         gestFile = openFile(dir, "_gestures.csv",    header: GestureRecord.header)
         bleFile  = openFile(dir, "_ble.csv",         header: "wall_ms,name,uuid,rssi")
+        trialsFile = openFile(dir, "_trials.csv",    header: TrialRunner.csvHeader)
 
         nTaps = 0; nGestures = 0; nBle = 0
         touchSlot.removeAll(); nextSlot = 0
@@ -61,7 +67,10 @@ final class Recorder: ObservableObject {
         assembler.onGesture = { [weak self] rec in
             guard let self else { return }
             self.append(self.gestFile, rec.csvRow)
-            DispatchQueue.main.async { self.nGestures += 1 }
+            DispatchQueue.main.async {
+                self.nGestures += 1
+                self.onGestureRecord?(rec)
+            }
         }
         scanner.nameFilter = bleFilter
         scanner.onStatus = { [weak self] s in DispatchQueue.main.async { self?.status = s } }
@@ -81,8 +90,8 @@ final class Recorder: ObservableObject {
         guard isRecording else { return }
         isRecording = false
         scanner.stop()
-        for f in [tapsFile, rawFile, gestFile, bleFile] { try? f?.close() }
-        tapsFile = nil; rawFile = nil; gestFile = nil; bleFile = nil
+        for f in [tapsFile, rawFile, gestFile, bleFile, trialsFile] { try? f?.close() }
+        tapsFile = nil; rawFile = nil; gestFile = nil; bleFile = nil; trialsFile = nil
         status = "Saved \(nTaps) taps, \(nGestures) gestures, \(nBle) BLE → \(sessionName)"
     }
 
@@ -114,6 +123,7 @@ final class Recorder: ObservableObject {
         case .began:
             append(tapsFile, "\(wall),\(fmt6(kts)),\(Int(x.rounded())),\(Int(y.rounded()))")
             nTaps += 1
+            onTouchDown?(wall)
             assembler.began(id, x, y, kts, wall)
         case .moved:
             assembler.moved(id, x, y, kts)
@@ -122,6 +132,39 @@ final class Recorder: ObservableObject {
             touchSlot[id] = nil
         default:
             break
+        }
+    }
+
+    // MARK: - Study outputs
+
+    func writeTrialRow(_ row: String) { append(trialsFile, row) }
+
+    /// The schedule as actually run, and the session metadata, both beside the CSVs
+    /// so a dataset is self-describing rather than depending on remembered settings.
+    func writeSessionFiles(schedule: Schedule, preset: String) {
+        guard let dir = sessionDir else { return }
+        if let d = schedule.jsonData() {
+            try? d.write(to: dir.appendingPathComponent(sessionName + "_schedule.json"))
+        }
+        let meta: [String: Any] = [
+            "session": sessionName,
+            "platform": "ios",
+            "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev",
+            "device_model": UIDevice.current.model,
+            "system_version": UIDevice.current.systemVersion,
+            "preset": preset,
+            "seed": String(schedule.seed),
+            "started_wall_ms": TrialRunner.nowMs(),
+            "note_required_fields": "watch_wrist / interacting_hand / posture / orientation "
+                + "must be filled in before analysis - see GESTURE_STUDY_SPEC.md 7",
+            "watch_wrist": "",
+            "interacting_hand": "",
+            "posture": "",
+            "tablet_orientation": ""
+        ]
+        if let d = try? JSONSerialization.data(withJSONObject: meta,
+                                               options: [.prettyPrinted, .sortedKeys]) {
+            try? d.write(to: dir.appendingPathComponent(sessionName + "_session.json"))
         }
     }
 
