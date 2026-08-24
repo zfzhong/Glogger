@@ -9,6 +9,13 @@ import UIKit
 struct ContentView: View {
     @EnvironmentObject var recorder: Recorder
     @StateObject private var runner = TrialRunner()
+    @StateObject private var uploader = Uploader()
+    // HTTPS on 443: verified working, and it avoids an App Transport Security
+    // exception, which plain http:// would require.
+    @AppStorage("serverBase") private var serverBase = "https://withings.geosketch.art"
+    @AppStorage("studyName") private var studyName = "elicitation"
+    @AppStorage("participant") private var participant = ""
+    @AppStorage("uploadToken") private var uploadToken = ""
     @State private var showShare = false
     @State private var studyMode = true
     @State private var preset: Preset = .demo
@@ -80,11 +87,44 @@ struct ContentView: View {
                 }
                 .disabled(recorder.isRecording || recorder.sessionDir == nil)
 
+                Button {
+                    guard let dir = recorder.sessionDir else { return }
+                    Task {
+                        await uploader.upload(dir: dir, session: recorder.sessionName,
+                                              base: serverBase, study: studyName,
+                                              participant: participant,
+                                              token: uploadToken.isEmpty ? nil : uploadToken)
+                    }
+                } label: {
+                    Label(uploader.busy ? "Uploading…" : "Upload", systemImage: "icloud.and.arrow.up")
+                }
+                .disabled(recorder.isRecording || recorder.sessionDir == nil || uploader.busy)
+
                 Spacer()
                 Text("taps \(recorder.nTaps)   gest \(recorder.nGestures)   BLE \(recorder.nBle)   IMU \(recorder.nImu)")
                     .font(.system(.callout, design: .monospaced))
                     .foregroundStyle(.secondary)
             }
+            HStack(spacing: 8) {
+                Text("Server").font(.caption).foregroundStyle(.secondary)
+                TextField("https://host", text: $serverBase)
+                    .textFieldStyle(.roundedBorder).frame(width: 260)
+                    .autocorrectionDisabled().textInputAutocapitalization(.never)
+                TextField("study", text: $studyName)
+                    .textFieldStyle(.roundedBorder).frame(width: 110)
+                TextField("participant", text: $participant)
+                    .textFieldStyle(.roundedBorder).frame(width: 110)
+                TextField("token (optional)", text: $uploadToken)
+                    .textFieldStyle(.roundedBorder).frame(width: 130)
+                if !uploader.progress.isEmpty {
+                    Text(uploader.progress)
+                        .font(.caption).foregroundStyle(
+                            uploader.progress.contains("FAILED") ? .orange : .secondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+            }
+
             HStack {
                 Circle().fill(recorder.isRecording ? .red : .gray).frame(width: 10, height: 10)
                 Text(recorder.status).font(.callout).foregroundStyle(.secondary)
