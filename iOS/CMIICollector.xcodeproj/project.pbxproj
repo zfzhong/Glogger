@@ -157,6 +157,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = W883X69B28;
 				GENERATE_INFOPLIST_FILE = YES;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				INFOPLIST_KEY_CFBundleDisplayName = GestureLogger;
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Logs the paired watch's BLE signal strength during data collection.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -184,6 +185,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = W883X69B28;
 				GENERATE_INFOPLIST_FILE = YES;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				INFOPLIST_KEY_CFBundleDisplayName = GestureLogger;
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Logs the paired watch's BLE signal strength during data collection.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
