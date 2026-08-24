@@ -12,7 +12,13 @@ iOS gives no passive stream of a real user's touches on other apps. `adb`-style
 bridges (incl. **facebook/idb**) only **inject** input or take AX/screen snapshots —
 they cannot read the taps a person makes. Per-tap ground truth is therefore only
 available (without a jailbreak) for touches **inside your own app**. The upside:
-we also get `force` and contact `majorRadius`, which `getevent` never provided.
+we also get contact `majorRadius`, which `getevent` never provided.
+
+> **`force` is always 0 for finger input on this iPad.** The 12.9" 6th gen has no
+> finger force sensing — `UITouch.force` is non-zero only for Apple Pencil.
+> Verified across all 513 touch samples of session `0824_1043`. The column is kept
+> for schema stability and for Pencil sessions; do not treat it as a feature.
+> `majorRadius` does work (0–31.3 pt observed).
 
 ## Output (per session, in the app's Documents/sessions/<name>/)
 
