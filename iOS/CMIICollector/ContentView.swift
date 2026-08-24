@@ -65,6 +65,16 @@ struct ContentView: View {
                     }.buttonStyle(.borderedProminent)
                 }
 
+                Toggle("Advertise", isOn: $recorder.advertise)
+                    .toggleStyle(.switch)
+                    .fixedSize()
+                    .disabled(recorder.isRecording)
+
+                TextField("adv name", text: $recorder.advertiseName)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 110)
+                    .disabled(recorder.isRecording || !recorder.advertise)
+
                 Button { showShare = true } label: {
                     Label("Export", systemImage: "square.and.arrow.up")
                 }

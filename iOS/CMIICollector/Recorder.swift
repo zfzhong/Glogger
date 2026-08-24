@@ -25,6 +25,11 @@ final class Recorder: ObservableObject {
     @Published var nGestures = 0
     @Published var nBle = 0
     @Published var nImu = 0
+    @Published var advertise = true          // tablet acts as the beacon for the watch
+    /// Slogger on the watch filters by DEVICE NAME, not service UUID
+    /// (EXPERIMENT_PROTOCOL.md §Software configuration), so this must match the
+    /// name Slogger's scan filter is set to.
+    @Published var advertiseName = "CMII-Pad"
     @Published private(set) var sessionDir: URL?
 
     /// Hooks for the study engine (set by ContentView). Called on the main thread.
@@ -39,6 +44,7 @@ final class Recorder: ObservableObject {
 
     private let scanner = BLEScanner()
     private let motion = MotionLogger()
+    private let advertiser = BLEAdvertiser()
     private var accelFile: FileHandle?
     private var gyroFile: FileHandle?
     private var magFile: FileHandle?
@@ -113,6 +119,12 @@ final class Recorder: ObservableObject {
         }
         motion.start()
 
+        if advertise {
+            advertiser.localName = advertiseName
+            advertiser.onStatus = { [weak self] s in DispatchQueue.main.async { self?.status = s } }
+            advertiser.start()
+        }
+
         isRecording = true
         status = "Recording '\(sessionName)'"
     }
@@ -122,6 +134,7 @@ final class Recorder: ObservableObject {
         isRecording = false
         scanner.stop()
         motion.stop()
+        advertiser.stop()
         nImu = motion.nSamples
         imuQueue.sync { }                       // drain queued IMU writes before closing
         for f in [tapsFile, rawFile, gestFile, bleFile, trialsFile,
