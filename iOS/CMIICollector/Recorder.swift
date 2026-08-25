@@ -192,13 +192,13 @@ final class Recorder: ObservableObject {
     /// so a dataset is self-describing rather than depending on remembered settings.
     /// Writes the two per-session sidecar files.
     ///
-    /// `_schedule.json` is the as-run design: a snapshot of exactly what this
+    /// `_play.json` is the as-run design: a snapshot of exactly what this
     /// session played. That is what makes it safe to edit a shared play on
     /// the server afterwards - already-collected sessions keep their own copy.
     func writeSessionFiles(play: Play, preset: String, meta info: SessionMeta) {
         guard let dir = sessionDir else { return }
         if let d = play.jsonData() {
-            try? d.write(to: dir.appendingPathComponent(sessionName + "_schedule.json"))
+            try? d.write(to: dir.appendingPathComponent(sessionName + "_play.json"))
         }
         var meta: [String: Any] = [
             "session": sessionName,
@@ -208,7 +208,7 @@ final class Recorder: ObservableObject {
             "system_version": UIDevice.current.systemVersion,
             "preset": preset,
             "seed": String(play.seed),
-            "schedule_name": play.name,
+            "play_name": play.name,
             "started_wall_ms": TrialRunner.nowMs(),
             "advertise_name": info.advertiseName,
             "participant": info.participant,

@@ -208,7 +208,7 @@ enum Animals {
 }
 
 struct Play: Codable {
-    var scheduleVersion = 3
+    var playVersion = 3
     var name: String
     var seed: UInt64
     var rows = 2

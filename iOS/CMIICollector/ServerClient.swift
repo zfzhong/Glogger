@@ -14,14 +14,13 @@ struct ExperimentInfo: Codable, Identifiable, Hashable {
     var name: String
     var description: String
     var sessions: Int
-    // Server-side JSON keys, unchanged by the rename so the contract holds.
-    var scheduleId: Int?
-    var scheduleName: String?
+    var playId: Int?
+    var playName: String?
     var trialCount: Int
 
-    var hasPlay: Bool { (scheduleId ?? 0) > 0 && trialCount > 0 }
+    var hasPlay: Bool { (playId ?? 0) > 0 && trialCount > 0 }
     var label: String {
-        hasPlay ? "\(name) — \(scheduleName ?? "?") (\(trialCount))"
+        hasPlay ? "\(name) — \(playName ?? "?") (\(trialCount))"
                     : "\(name) — no play"
     }
 }
