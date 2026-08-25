@@ -10,16 +10,15 @@ struct ContentView: View {
     @EnvironmentObject var recorder: Recorder
     @StateObject private var runner = TrialRunner()
     @StateObject private var uploader = Uploader()
-    // HTTPS on 443: verified working, and it avoids an App Transport Security
-    // exception, which plain http:// would require.
-    @AppStorage("serverBase") private var serverBase = "https://withings.geosketch.art"
-    @AppStorage("studyName") private var studyName = "elicitation"
-    @AppStorage("participant") private var participant = ""
-    @AppStorage("uploadToken") private var uploadToken = ""
+    @StateObject private var config = Config()
+    @StateObject private var server = ServerClient()
     @State private var showShare = false
+    @State private var showConfig = false
     @State private var studyMode = true
-    @State private var preset: Preset = .demo
-    @State private var seedText = "20260826"
+    /// The schedule downloaded for the chosen experiment. nil means the run will
+    /// fall back to generating one on the device.
+    @State private var loadedSchedule: Schedule?
+    @State private var scheduleStatus = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -35,12 +34,30 @@ struct ContentView: View {
             recorder.onGestureRecord = { [weak runner] rec in runner?.gesture(rec) }
             runner.onRow = { [weak recorder] row in recorder?.writeTrialRow(row) }
             UIApplication.shared.isIdleTimerDisabled = true   // never sleep mid-session
+            recorder.advertiseName = config.advertiseName
+            // Show the cached schedule immediately; the network refresh can be slow
+            // or absent, and the operator should still see what would run.
+            if config.hasExperiment { loadedSchedule = server.cached(config.experimentId) }
+            Task {
+                await server.loadExperiments(base: config.serverBase)
+                if config.hasExperiment {
+                    let (s, msg) = await server.fetchSchedule(base: config.serverBase,
+                                                              experimentId: config.experimentId)
+                    if let s { loadedSchedule = s }
+                    scheduleStatus = msg
+                }
+            }
             // Test hook: lets a simulator run drive the study without a human tap.
             if ProcessInfo.processInfo.arguments.contains("-autostart") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { startStudy() }
             }
         }
         .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
+        .sheet(isPresented: $showConfig) {
+            ConfigView(config: config, server: server, recorder: recorder,
+                       loadedSchedule: $loadedSchedule, scheduleStatus: $scheduleStatus)
+                .onDisappear { recorder.advertiseName = config.advertiseName }
+        }
         .sheet(isPresented: $showShare) {
             if let dir = recorder.sessionDir {
                 ShareSheet(items: csvURLs(in: dir))
@@ -55,32 +72,32 @@ struct ContentView: View {
             HStack(spacing: 12) {
                 TextField("Session name", text: $recorder.sessionName)
                     .textFieldStyle(.roundedBorder)
-                    .frame(width: 180)
-                    .disabled(recorder.isRecording)
-                TextField("BLE name filter", text: $recorder.bleFilter)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 150)
+                    .frame(width: 170)
                     .disabled(recorder.isRecording)
 
-                if recorder.isRecording {
-                    Button(role: .destructive) { recorder.stop() } label: {
-                        Label("Stop", systemImage: "stop.fill")
-                    }.buttonStyle(.borderedProminent)
-                } else {
-                    Button { recorder.start() } label: {
-                        Label("Start", systemImage: "record.circle")
-                    }.buttonStyle(.borderedProminent)
+                // Guided study drives recording itself, so a separate record
+                // button there was a second way to start the same thing. It only
+                // earns its place in Free phases, where there is no study.
+                if !studyMode {
+                    if recorder.isRecording {
+                        Button(role: .destructive) { recorder.stop() } label: {
+                            Label("Stop", systemImage: "stop.fill")
+                        }.buttonStyle(.borderedProminent)
+                    } else {
+                        Button { recorder.start() } label: {
+                            Label("Start", systemImage: "record.circle")
+                        }.buttonStyle(.borderedProminent)
+                    }
                 }
 
                 Toggle("Advertise", isOn: $recorder.advertise)
-                    .toggleStyle(.switch)
-                    .fixedSize()
+                    .toggleStyle(.switch).fixedSize()
                     .disabled(recorder.isRecording)
 
-                TextField("adv name", text: $recorder.advertiseName)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(width: 110)
-                    .disabled(recorder.isRecording || !recorder.advertise)
+                Button { showConfig = true } label: {
+                    Label("Configure", systemImage: "gearshape")
+                }
+                .disabled(recorder.isRecording)
 
                 Button { showShare = true } label: {
                     Label("Export", systemImage: "square.and.arrow.up")
@@ -91,9 +108,10 @@ struct ContentView: View {
                     guard let dir = recorder.sessionDir else { return }
                     Task {
                         await uploader.upload(dir: dir, session: recorder.sessionName,
-                                              base: serverBase, study: studyName,
-                                              participant: participant,
-                                              token: uploadToken.isEmpty ? nil : uploadToken)
+                                              base: config.serverBase, study: config.studyName,
+                                              participant: config.participant,
+                                              token: config.uploadToken.isEmpty ? nil : config.uploadToken,
+                                              experimentId: config.experimentId)
                     }
                 } label: {
                     Label(uploader.busy ? "Uploading…" : "Upload", systemImage: "icloud.and.arrow.up")
@@ -105,25 +123,39 @@ struct ContentView: View {
                     .font(.system(.callout, design: .monospaced))
                     .foregroundStyle(.secondary)
             }
-            HStack(spacing: 8) {
-                Text("Server").font(.caption).foregroundStyle(.secondary)
-                TextField("https://host", text: $serverBase)
-                    .textFieldStyle(.roundedBorder).frame(width: 260)
-                    .autocorrectionDisabled().textInputAutocapitalization(.never)
-                TextField("study", text: $studyName)
-                    .textFieldStyle(.roundedBorder).frame(width: 110)
-                TextField("participant", text: $participant)
-                    .textFieldStyle(.roundedBorder).frame(width: 110)
-                TextField("token (optional)", text: $uploadToken)
-                    .textFieldStyle(.roundedBorder).frame(width: 130)
+
+            // What this run will actually do - the two things worth getting wrong.
+            HStack(spacing: 10) {
+                Image(systemName: config.hasExperiment ? "flask.fill" : "flask")
+                    .foregroundStyle(config.hasExperiment ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                Text(config.hasExperiment ? config.experimentName : "no experiment")
+                    .fontWeight(config.hasExperiment ? .semibold : .regular)
+                    .foregroundStyle(config.hasExperiment ? .primary : .secondary)
+
+                if let s = loadedSchedule {
+                    Text("· \(s.name) · \(s.trials.count) trials")
+                        .foregroundStyle(.secondary)
+                } else if config.hasExperiment {
+                    Text("· no schedule — will generate \(config.fallbackPreset) on device")
+                        .foregroundStyle(.orange)
+                } else {
+                    Text("· will generate \(config.fallbackPreset) on device")
+                        .foregroundStyle(.secondary)
+                }
+
+                if !config.missingMetadata.isEmpty {
+                    Label(config.missingMetadata.joined(separator: ", "),
+                          systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                }
                 if !uploader.progress.isEmpty {
                     Text(uploader.progress)
-                        .font(.caption).foregroundStyle(
-                            uploader.progress.contains("FAILED") ? .orange : .secondary)
+                        .foregroundStyle(uploader.progress.contains("FAILED") ? .orange : .secondary)
                         .lineLimit(1)
                 }
                 Spacer()
             }
+            .font(.caption)
 
             HStack {
                 Circle().fill(recorder.isRecording ? .red : .gray).frame(width: 10, height: 10)
@@ -138,26 +170,25 @@ struct ContentView: View {
                 .disabled(runner.isRunning)
 
                 if studyMode {
-                    Picker("Preset", selection: $preset) {
-                        ForEach(Preset.allCases) { p in Text(p.title).tag(p) }
-                    }
-                    .pickerStyle(.menu)
-                    .disabled(runner.isRunning)
-
-                    TextField("seed", text: $seedText)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 100)
-                        .disabled(runner.isRunning)
-
-                    if runner.isRunning {
-                        Button(role: .destructive) { runner.abort() } label: {
-                            Label("Stop study", systemImage: "xmark.circle.fill")
+                    // Recording and the trial sequence are one action here. Keyed
+                    // on isRecording rather than runner.isRunning so the button
+                    // still offers Stop after the last trial - recording carries on
+                    // until it is stopped, and Upload needs it stopped.
+                    if recorder.isRecording {
+                        Button(role: .destructive) {
+                            runner.abort()
+                            recorder.stop()
+                        } label: {
+                            Label(runner.isRunning ? "Stop study" : "Stop recording",
+                                  systemImage: "stop.fill")
                         }
+                        .buttonStyle(.borderedProminent)
                     } else {
                         Button { startStudy() } label: {
                             Label("Start study", systemImage: "play.fill")
                         }
                         .buttonStyle(.borderedProminent)
+                        .disabled(uploader.busy)
                     }
                 } else {
                     Picker("Phase", selection: $recorder.studyPhase) {
@@ -175,12 +206,23 @@ struct ContentView: View {
 
     // MARK: Phase screens
 
+    /// Prefers the schedule downloaded for the chosen experiment; falls back to
+    /// generating one on the device so a run is never blocked by the network.
     private func startStudy() {
-        let seed = UInt64(seedText.trimmingCharacters(in: .whitespaces)) ?? 20260826
-        let s = Schedule.make(preset: preset, seed: seed)
+        let sched: Schedule
+        let presetLabel: String
+        if let s = loadedSchedule {
+            sched = s
+            presetLabel = "server:" + s.name
+        } else {
+            let seed = UInt64(config.fallbackSeed.trimmingCharacters(in: .whitespaces)) ?? 20260826
+            let p = Preset(rawValue: config.fallbackPreset) ?? .demo
+            sched = Schedule.make(preset: p, seed: seed)
+            presetLabel = p.rawValue
+        }
         if !recorder.isRecording { recorder.start() }
-        recorder.writeSessionFiles(schedule: s, preset: preset.rawValue)
-        runner.start(s)
+        recorder.writeSessionFiles(schedule: sched, preset: presetLabel, meta: config.snapshot())
+        runner.start(sched)
     }
 
     @ViewBuilder private var phaseContent: some View {
