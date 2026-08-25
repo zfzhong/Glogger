@@ -36,11 +36,12 @@ already carried on the scene as `toRow`/`toCol`.
 
 ## Settled parameters
 
-- **Deck depth 5**, five different animals per deck. With per-trial reset a deck
-  only has to survive one scene, and the most any scene consumes is one card, so 5
-  is generous - it is chosen for how a stack of 5 renders (visible offset edges,
-  not cluttered) rather than for capacity. Faces repeat across decks; there are
-  only 11 symbols in the pool and the backs carry deck identity anyway.
+- **Deck depth 3**, three different animals per deck. With per-trial reset a deck
+  only has to survive one scene and the most any scene consumes is one card, so
+  capacity is not the constraint - depth is chosen for how the stack reads, and 3
+  gives visible offset edges without crowding a small cell. Faces repeat across
+  decks; there are only 11 symbols in the pool and the backs carry deck identity
+  anyway.
 - **Backs are colour plus texture**, one pairing per deck, stable for the session.
   Colour survives the cell shrinking - artwork drops to 100pt at 3x3 and 70pt at
   4x4, where a fine pattern alone turns to grey mush. The texture gives each deck a
