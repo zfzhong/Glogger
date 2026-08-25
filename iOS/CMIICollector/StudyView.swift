@@ -1,20 +1,45 @@
 //
 //  StudyView.swift
-//  The 2x2 cue screen. One block is live at a time; the other three stay visible
-//  so the layout — and therefore the reach distances — remain constant.
+//  The cue screen. One block is live at a time; the rest stay visible so the
+//  layout — and therefore the reach distances — remain constant.
+//
+//  The grid is whatever the schedule says (rows x cols), not a fixed 2x2. The
+//  server can emit other layouts, and a hardcoded 2x2 would silently drop every
+//  trial addressed to row or column 2: no cell would light up, the participant
+//  would see nothing to do, and the trial would time out looking like a miss.
 //
 import SwiftUI
 
 struct StudyView: View {
     @ObservedObject var runner: TrialRunner
 
+    /// One deck per block. Reset whenever the scene changes, so the board a
+    /// participant sees on trial 20 is identical to the one on trial 2 - otherwise
+    /// flicked-down decks accumulate and the visual scene drifts through a session.
+    @State private var decks: [Int: DeckState] = [:]
+
+    /// Grid shape comes from the SCENE, falling back to the schedule default.
+    ///
+    /// It is read from `runner.displayTrial` rather than `runner.current` so the
+    /// grid does not collapse to the default during the gap between scenes - the
+    /// screen would visibly reflow between every trial.
+    private var grid: (rows: Int, cols: Int) {
+        guard let s = runner.schedule else { return (2, 2) }
+        guard let t = runner.displayTrial else { return (max(1, s.rows), max(1, s.cols)) }
+        return t.grid(default: s)
+    }
+    private var rows: Int { grid.rows }
+    private var cols: Int { grid.cols }
+
     var body: some View {
         VStack(spacing: 18) {
             header
-            grid
+            gridView
         }
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onChange(of: runner.index) { _, _ in decks = [:] }
+        .onChange(of: runner.phase) { _, p in if p == .idle { decks = [:] } }
     }
 
     // MARK: Header
@@ -59,7 +84,14 @@ struct StudyView: View {
     private var bannerColor: Color {
         switch runner.phase {
         case .cued, .settling: return .primary
-        case .gap: return (runner.lastMatched == true) ? .green : .orange
+        // Three states: matched, missed, and not verifiable. An unscored gesture
+        // must not be painted like a failure - nothing went wrong.
+        case .gap:
+            switch runner.lastMatched {
+            case .some(true): return .green
+            case .some(false): return .orange
+            case nil: return .secondary
+            }
         case .done: return .green
         default: return .secondary
         }
@@ -67,11 +99,12 @@ struct StudyView: View {
 
     // MARK: Grid
 
-    private var grid: some View {
-        VStack(spacing: 16) {
-            ForEach(0..<2, id: \.self) { r in
-                HStack(spacing: 16) {
-                    ForEach(0..<2, id: \.self) { c in
+    private var gridView: some View {
+        let gap: CGFloat = rows * cols > 9 ? 10 : 16
+        return VStack(spacing: gap) {
+            ForEach(0..<rows, id: \.self) { r in
+                HStack(spacing: gap) {
+                    ForEach(0..<cols, id: \.self) { c in
                         cell(row: r, col: c)
                     }
                 }
@@ -85,13 +118,31 @@ struct StudyView: View {
         return t.row == r && t.col == c
     }
 
+    /// Where a travelling gesture has to end up. Drawn as a distinct target so
+    /// drag length is set by the layout rather than by how far the participant
+    /// felt like going.
+    private func isDestination(_ r: Int, _ c: Int) -> Bool {
+        guard let t = runner.current, t.isTravelling,
+              runner.phase == .cued || runner.phase == .settling else { return false }
+        return t.toRow == r && t.toCol == c
+    }
+
     private func isFlashing(_ r: Int, _ c: Int) -> Bool {
         guard let t = runner.current, runner.phase == .gap else { return false }
         return t.row == r && t.col == c
     }
 
+    /// The three faces in one deck. Different animals within a deck, and the deck
+    /// is identified by its back rather than by these, so repeats across decks
+    /// are fine - there are only 11 symbols in the pool.
+    private func deckAnimals(_ block: Int) -> [String] {
+        let pool = runner.schedule?.blockPictures ?? Animals.all
+        guard !pool.isEmpty else { return ["pawprint.fill"] }
+        return (0..<3).map { pool[(block * 3 + $0) % pool.count] }
+    }
+
     private func picture(_ r: Int, _ c: Int) -> String {
-        let idx = r * 2 + c
+        let idx = r * cols + c
         if let pics = runner.schedule?.blockPictures, idx < pics.count { return pics[idx] }
         // Before a schedule exists, still show four DIFFERENT animals so the idle
         // screen looks like the study rather than four identical placeholders.
@@ -101,38 +152,74 @@ struct StudyView: View {
 
     private func cell(row r: Int, col c: Int) -> some View {
         let live = isLive(r, c)
+        let dest = isDestination(r, c)
         let flashing = isFlashing(r, c)
-        let matched = runner.lastMatched == true
+        let verdict = runner.lastMatched            // nil = not verifiable
+        let flashTint: Color = verdict == nil ? .secondary : (verdict! ? .green : .orange)
 
-        let fill: Color = flashing ? (matched ? .green.opacity(0.22) : .orange.opacity(0.22))
+        let fill: Color = flashing ? flashTint.opacity(0.22)
                                    : (live ? Color.accentColor.opacity(0.16)
-                                           : Color.gray.opacity(0.10))
-        let stroke: Color = flashing ? (matched ? .green : .orange)
-                                     : (live ? .accentColor : .gray.opacity(0.25))
+                                     : (dest ? Color.green.opacity(0.12)
+                                             : Color.gray.opacity(0.10)))
+        let stroke: Color = flashing ? flashTint
+                                     : (live ? .accentColor
+                                        : (dest ? .green : .gray.opacity(0.25)))
+
+        // Shrink the furniture as the grid grows, so a 3x3 or 4x4 still fits.
+        let big = max(rows, cols)
+        let radius: CGFloat = big >= 4 ? 14 : (big == 3 ? 18 : 22)
+        let art: CGFloat = big >= 4 ? 70 : (big == 3 ? 100 : 150)
+        let pad: CGFloat = big >= 4 ? 8 : (big == 3 ? 12 : 18)
 
         return ZStack {
-            RoundedRectangle(cornerRadius: 22).fill(fill)
-            RoundedRectangle(cornerRadius: 22)
-                .strokeBorder(stroke, lineWidth: live || flashing ? 6 : 2)
+            RoundedRectangle(cornerRadius: radius).fill(fill)
+            RoundedRectangle(cornerRadius: radius)
+                .strokeBorder(stroke, style: StrokeStyle(
+                    lineWidth: live || flashing ? 6 : (dest ? 5 : 2),
+                    dash: dest ? [10, 7] : []))
 
-            VStack(spacing: 14) {
-                Image(systemName: picture(r, c))
-                    .resizable().scaledToFit()
-                    .frame(maxWidth: 150, maxHeight: 150)
-                    .foregroundStyle(live ? Color.accentColor : Color.secondary.opacity(0.55))
-                    .scaleEffect(live ? 1.0 : 0.86)
+            VStack(spacing: big >= 4 ? 6 : 14) {
+                // Sized off the cell, not a fixed constant: the deck IS the block
+                // content, so it should fill it rather than float in the middle.
+                GeometryReader { geo in
+                    let w = geo.size.width, h = geo.size.height
+                    let side = min(w * 0.66, h / 1.35 * 0.82)
+                    CardDeckView(
+                        block: r * cols + c,
+                        animals: deckAnimals(r * cols + c),
+                        live: live,
+                        cardSize: max(40, side),
+                        state: Binding(
+                            get: { decks[r * cols + c] ?? DeckState() },
+                            set: { decks[r * cols + c] = $0 }))
+                        .frame(width: w, height: h)
+                }
+                    .scaleEffect(live ? 1.0 : 0.94)
+                    .opacity(dest ? 0.55 : 1)      // the drop target, not the thing to grab
+
+                if dest, let t = runner.current, let icon = t.directionIcon {
+                    HStack(spacing: 6) {
+                        Image(systemName: icon)
+                        Text("drop here")
+                    }
+                    .font(big >= 4 ? .caption : .headline)
+                    .foregroundStyle(.green)
+                }
 
                 if live, let t = runner.current {
-                    HStack(spacing: 10) {
-                        Text(t.type.verb).font(.title2.weight(.semibold))
-                        if let d = t.dir {
-                            Image(systemName: d.arrow).font(.title2.weight(.bold))
+                    HStack(spacing: big >= 4 ? 5 : 10) {
+                        Text(t.displayVerb)
+                            .font(big >= 4 ? .headline : .title2.weight(.semibold))
+                            .minimumScaleFactor(0.6).lineLimit(1)
+                        if let icon = t.directionIcon {
+                            Image(systemName: icon)
+                                .font(big >= 4 ? .headline : .title2.weight(.bold))
                         }
                     }
                     .foregroundStyle(Color.accentColor)
                 }
             }
-            .padding(18)
+            .padding(pad)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(.easeOut(duration: 0.15), value: live)
