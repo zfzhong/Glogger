@@ -3,7 +3,7 @@
 //  The cue screen. One block is live at a time; the rest stay visible so the
 //  layout — and therefore the reach distances — remain constant.
 //
-//  The grid is whatever the schedule says (rows x cols), not a fixed 2x2. The
+//  The grid is whatever the play says (rows x cols), not a fixed 2x2. The
 //  server can emit other layouts, and a hardcoded 2x2 would silently drop every
 //  trial addressed to row or column 2: no cell would light up, the participant
 //  would see nothing to do, and the trial would time out looking like a miss.
@@ -18,13 +18,13 @@ struct StudyView: View {
     /// flicked-down decks accumulate and the visual scene drifts through a session.
     @State private var decks: [Int: DeckState] = [:]
 
-    /// Grid shape comes from the SCENE, falling back to the schedule default.
+    /// Grid shape comes from the SCENE, falling back to the play default.
     ///
     /// It is read from `runner.displayTrial` rather than `runner.current` so the
     /// grid does not collapse to the default during the gap between scenes - the
     /// screen would visibly reflow between every trial.
     private var grid: (rows: Int, cols: Int) {
-        guard let s = runner.schedule else { return (2, 2) }
+        guard let s = runner.play else { return (2, 2) }
         guard let t = runner.displayTrial else { return (max(1, s.rows), max(1, s.cols)) }
         return t.grid(default: s)
     }
@@ -136,15 +136,15 @@ struct StudyView: View {
     /// is identified by its back rather than by these, so repeats across decks
     /// are fine - there are only 11 symbols in the pool.
     private func deckAnimals(_ block: Int) -> [String] {
-        let pool = runner.schedule?.blockPictures ?? Animals.all
+        let pool = runner.play?.blockPictures ?? Animals.all
         guard !pool.isEmpty else { return ["pawprint.fill"] }
         return (0..<3).map { pool[(block * 3 + $0) % pool.count] }
     }
 
     private func picture(_ r: Int, _ c: Int) -> String {
         let idx = r * cols + c
-        if let pics = runner.schedule?.blockPictures, idx < pics.count { return pics[idx] }
-        // Before a schedule exists, still show four DIFFERENT animals so the idle
+        if let pics = runner.play?.blockPictures, idx < pics.count { return pics[idx] }
+        // Before a play exists, still show four DIFFERENT animals so the idle
         // screen looks like the study rather than four identical placeholders.
         let fallback = Animals.all
         return fallback.isEmpty ? "pawprint.fill" : fallback[idx % fallback.count]

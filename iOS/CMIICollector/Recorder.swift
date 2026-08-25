@@ -188,29 +188,45 @@ final class Recorder: ObservableObject {
 
     func writeTrialRow(_ row: String) { append(trialsFile, row) }
 
-    /// The schedule as actually run, and the session metadata, both beside the CSVs
+    /// The play as actually run, and the session metadata, both beside the CSVs
     /// so a dataset is self-describing rather than depending on remembered settings.
-    func writeSessionFiles(schedule: Schedule, preset: String) {
+    /// Writes the two per-session sidecar files.
+    ///
+    /// `_schedule.json` is the as-run design: a snapshot of exactly what this
+    /// session played. That is what makes it safe to edit a shared play on
+    /// the server afterwards - already-collected sessions keep their own copy.
+    func writeSessionFiles(play: Play, preset: String, meta info: SessionMeta) {
         guard let dir = sessionDir else { return }
-        if let d = schedule.jsonData() {
+        if let d = play.jsonData() {
             try? d.write(to: dir.appendingPathComponent(sessionName + "_schedule.json"))
         }
-        let meta: [String: Any] = [
+        var meta: [String: Any] = [
             "session": sessionName,
             "platform": "ios",
             "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev",
             "device_model": UIDevice.current.model,
             "system_version": UIDevice.current.systemVersion,
             "preset": preset,
-            "seed": String(schedule.seed),
+            "seed": String(play.seed),
+            "schedule_name": play.name,
             "started_wall_ms": TrialRunner.nowMs(),
-            "note_required_fields": "watch_wrist / interacting_hand / posture / orientation "
-                + "must be filled in before analysis - see GESTURE_STUDY_SPEC.md 7",
-            "watch_wrist": "",
-            "interacting_hand": "",
-            "posture": "",
-            "tablet_orientation": ""
+            "advertise_name": info.advertiseName,
+            "participant": info.participant,
+            "study": info.studyName,
+            "watch_wrist": info.watchWrist,
+            "interacting_hand": info.interactingHand,
+            "posture": info.posture,
+            "tablet_orientation": info.tabletOrientation
         ]
+        if info.hasExperiment {
+            meta["experiment_id"] = info.experimentId
+            meta["experiment_name"] = info.experimentName
+        }
+        let missing = info.missing
+        if !missing.isEmpty {
+            meta["note_missing_fields"] = "not filled in at record time: "
+                + missing.joined(separator: ", ")
+        }
         if let d = try? JSONSerialization.data(withJSONObject: meta,
                                                options: [.prettyPrinted, .sortedKeys]) {
             try? d.write(to: dir.appendingPathComponent(sessionName + "_session.json"))

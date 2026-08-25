@@ -1,8 +1,8 @@
 //
 //  Study.swift
-//  Trial vocabulary, the schedule, and its seeded generator.
+//  Trial vocabulary, the play, and its seeded generator.
 //
-//  The schedule carries a FULLY MATERIALISED trial list rather than parameters to
+//  The play carries a FULLY MATERIALISED trial list rather than parameters to
 //  be re-generated. Swift's and Kotlin's seeded PRNGs disagree, so generating per
 //  platform would silently produce different designs from the same seed and break
 //  cross-platform comparability (GESTURE_STUDY_SPEC.md §9b). Both apps play back
@@ -24,6 +24,12 @@ struct SplitMix64: RandomNumberGenerator {
     }
 }
 
+/// Cardinal directions only.
+///
+/// Scenes no longer decode INTO this - a scene's `dir` is a plain string, because
+/// the book also has IN/OUT and CW/CCW and a closed enum would fail to decode
+/// them outright. This survives for the offline generator and for the geometry
+/// check, which is only meaningful for the four cardinals anyway.
 enum GDir: String, Codable, CaseIterable {
     case L, R, U, D
     var arrow: String {
@@ -44,6 +50,13 @@ enum GDir: String, Codable, CaseIterable {
     }
 }
 
+/// The built-in vocabulary.
+///
+/// This is NO LONGER what a scene is typed as - scenes carry a gesture slug as a
+/// plain string plus the verb and accepted labels the server sends, so a gesture
+/// added to the book on the web appears on the tablet with no app release. The
+/// enum survives for the offline fallback generator and as a label of last resort
+/// for a payload that predates the book.
 enum GType: String, Codable, CaseIterable {
     case tap, double_tap, long_press, swipe, drag
 
@@ -78,19 +91,87 @@ enum GType: String, Codable, CaseIterable {
     }
 }
 
+/// One scene: a gesture cue, the grid it is shown in, the key block the
+/// participant must act on, and how long they get.
+///
+/// rows/cols/durationMs are optional so a play generated before scenes
+/// existed - including one sitting in the on-disk cache - still decodes; the
+/// play-level values fill in.
 struct Trial: Codable, Identifiable {
     var i: Int
-    var type: GType
-    var dir: GDir?
+    /// Gesture slug from the book, e.g. "tap" or something added later.
+    var type: String
+    /// Direction code: L/R/U/D, or IN/OUT, CW/CCW for gestures that use them.
+    var dir: String?
     var row: Int
     var col: Int
     var picture: String
+    var rows: Int? = nil
+    var cols: Int? = nil
+    var durationMs: Int? = nil
+    /// Sent by the server so an unknown gesture still renders and still scores.
+    var verb: String? = nil
+    var directional: Bool? = nil
+    var acceptedLabels: [String]? = nil
+    var tag: String? = nil
+    var dirWord: String? = nil
+    var dirIcon: String? = nil
+    /// False for IN/OUT and CW/CCW: those cannot be checked against the stroke
+    /// geometry, so the label alone decides the match.
+    var dirVerifiable: Bool? = nil
+    var affordance: String? = nil
+    /// A travelling gesture ends on a different block. Drag does; a flick is
+    /// ballistic and a scroll stays inside its own block.
+    var travels: Bool? = nil
+    var toRow: Int? = nil
+    var toCol: Int? = nil
+    var toPicture: String? = nil
     var id: Int { i }
 
-    var block: Int { row * 2 + col }
+    private var builtIn: GType? { GType(rawValue: type) }
+    /// The cardinal direction, when this scene has one that geometry can check.
+    var cardinal: GDir? { dir.flatMap { GDir(rawValue: $0) } }
+
+    var directionWord: String {
+        if let w = dirWord, !w.isEmpty { return w }
+        return cardinal?.word ?? (dir ?? "").lowercased()
+    }
+    /// Validated on device: the server picks the symbol but cannot know what this
+    /// iOS version renders, and an unknown name draws blank space next to the cue.
+    var directionIcon: String? {
+        if let i = dirIcon, !i.isEmpty, UIImage(systemName: i) != nil { return i }
+        if let a = cardinal?.arrow, UIImage(systemName: a) != nil { return a }
+        return nil
+    }
+
+    /// What the tablet shows. Falls back to the built-in verb, then the raw slug
+    /// with underscores opened up, so a new gesture is never a blank cue.
+    var displayVerb: String {
+        if let v = verb, !v.isEmpty { return v }
+        if let b = builtIn { return b.verb }
+        return type.replacingOccurrences(of: "_", with: " ").capitalized
+    }
+
+    /// Classifier outputs that count as performing this gesture. Empty means the
+    /// gesture cannot be auto-verified, and match is recorded as unknown rather
+    /// than scoring every trial a failure.
+    var labels: [String] {
+        if let l = acceptedLabels { return l }
+        return builtIn?.acceptedLabels ?? []
+    }
+
+    func grid(default s: Play) -> (rows: Int, cols: Int) {
+        (max(1, rows ?? s.rows), max(1, cols ?? s.cols))
+    }
+    func block(default s: Play) -> Int { row * grid(default: s).cols + col }
+    var isTravelling: Bool { travels == true && toRow != nil && toCol != nil }
+
     var cueText: String {
-        if let d = dir { return "\(type.verb) \(d.word)" }
-        return type.verb
+        // A travelling scene shows its destination on screen, so naming the
+        // direction as well is redundant - the target says where to go.
+        if isTravelling { return displayVerb }
+        guard dir != nil else { return displayVerb }
+        return "\(displayVerb) \(directionWord)"
     }
 }
 
@@ -126,8 +207,8 @@ enum Animals {
     }()
 }
 
-struct Schedule: Codable {
-    var scheduleVersion = 2
+struct Play: Codable {
+    var scheduleVersion = 3
     var name: String
     var seed: UInt64
     var rows = 2
@@ -137,6 +218,7 @@ struct Schedule: Codable {
     var gapMinMs = 1200
     var gapMaxMs = 2500
     var settleMs = 450
+    var layouts: [String]? = nil
     var blockPictures: [String]
     var trials: [Trial]
 
@@ -145,7 +227,7 @@ struct Schedule: Codable {
     /// Balanced: each (gesture, direction) condition appears in a different block on
     /// each repetition, so gesture type is never tied to screen position — at the
     /// wrist, reach location would otherwise dominate gesture identity (spec §2).
-    static func make(preset: Preset, seed: UInt64) -> Schedule {
+    static func make(preset: Preset, seed: UInt64) -> Play {
         var rng = SplitMix64(seed: seed)
 
         var pics = Animals.all
@@ -162,15 +244,49 @@ struct Schedule: Codable {
         for rep in 0..<preset.blocksPerCondition {
             for (ci, c) in conditions.enumerated() {
                 let b = (ci + rep) % 4
-                out.append(Trial(i: 0, type: c.0, dir: c.1,
-                                 row: b / 2, col: b % 2, picture: blockPics[b]))
+                out.append(Trial(i: 0, type: c.0.rawValue, dir: c.1?.rawValue,
+                                 row: b / 2, col: b % 2, picture: blockPics[b],
+                                 rows: 2, cols: 2,
+                                 verb: c.0.verb,
+                                 directional: !c.0.directions.isEmpty,
+                                 acceptedLabels: c.0.acceptedLabels,
+                                 tag: "normal",
+                                 dirWord: c.1?.word, dirIcon: c.1?.arrow,
+                                 dirVerifiable: true, affordance: "image"))
             }
         }
         out.shuffle(using: &rng)
         for i in out.indices { out[i].i = i }
 
-        return Schedule(name: preset.rawValue, seed: seed,
+        return Play(name: preset.rawValue, seed: seed,
                         blockPictures: blockPics, trials: out)
+    }
+
+    /// Swap out any SF Symbol this iOS version does not have.
+    ///
+    /// Block pictures are chosen on the server, which cannot know what this
+    /// device can render - an unknown symbol name draws nothing, and the
+    /// participant would be cued to tap an empty square.
+    func sanitised() -> Play {
+        var out = self
+        let ok = Animals.all
+        var swaps: [String: String] = [:]
+        out.trials = trials   // replaced below if anything needs swapping
+        out.blockPictures = blockPictures.enumerated().map { idx, nameIn in
+            if UIImage(systemName: nameIn) != nil { return nameIn }
+            let sub = ok[idx % ok.count]
+            swaps[nameIn] = sub
+            return sub
+        }
+        if !swaps.isEmpty {
+            out.trials = trials.map { t in
+                var t = t
+                if let sub = swaps[t.picture] { t.picture = sub }
+                if let tp = t.toPicture, let sub = swaps[tp] { t.toPicture = sub }
+                return t
+            }
+        }
+        return out
     }
 
     func jsonData() -> Data? {

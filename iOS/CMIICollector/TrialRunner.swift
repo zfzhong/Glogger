@@ -27,7 +27,11 @@ final class TrialRunner: ObservableObject {
     @Published private(set) var lastOutcome = ""      // shown during the gap
     @Published private(set) var lastMatched: Bool?    // drives the block flash
 
-    private(set) var schedule: Schedule?
+    private(set) var play: Play?
+
+    /// The scene the screen should be drawn for. Holds the last scene through the
+    /// gap so the grid does not flicker back to the default between trials.
+    @Published private(set) var displayTrial: Trial?
 
     /// One CSV row per finished trial.
     var onRow: ((String) -> Void)?
@@ -39,16 +43,20 @@ final class TrialRunner: ObservableObject {
     private var lastUpMs: Int?
     private var collected: [GestureRecord] = []
 
-    var total: Int { schedule?.count ?? 0 }
+    var total: Int { play?.count ?? 0 }
     var isRunning: Bool { phase != .idle && phase != .done }
 
+    // match is 1 / 0 / empty. Empty means the cued gesture has no accepted
+    // classifier labels in the book, so it cannot be auto-verified - which is not
+    // the same as the participant getting it wrong.
     static let csvHeader = "trial_idx,cue_on_ms,block_row,block_col,cued_gesture,"
-        + "cued_direction,picture_id,first_down_ms,last_up_ms,outcome,classified_gesture,match"
+        + "cued_direction,picture_id,first_down_ms,last_up_ms,outcome,classified_gesture,match,"
+        + "pace_tag,cue_duration_ms,grid_rows,grid_cols"
 
     // MARK: - Control
 
-    func start(_ s: Schedule) {
-        schedule = s
+    func start(_ s: Play) {
+        play = s
         index = 0; nDone = 0; nMatched = 0
         lastOutcome = ""; lastMatched = nil
         beginReady()
@@ -58,6 +66,7 @@ final class TrialRunner: ObservableObject {
         gen += 1
         phase = .idle
         current = nil
+        displayTrial = nil
         lastOutcome = ""
         lastMatched = nil
     }
@@ -76,7 +85,7 @@ final class TrialRunner: ObservableObject {
         // Using wallMs directly made first_down_ms == last_up_ms and left every trial
         // with a zero-width time window - useless for slicing the watch IMU stream.
         lastUpMs = rec.wallMs + Int(rec.durMs.rounded())
-        guard phase == .cued, let s = schedule else { return }
+        guard phase == .cued, let s = play else { return }
         gen += 1                                   // cancel the cue timeout
         phase = .settling
         after(s.settleMs, gen) { [weak self] in self?.finish("completed") }
@@ -85,42 +94,50 @@ final class TrialRunner: ObservableObject {
     // MARK: - Phases
 
     private func beginReady() {
-        guard let s = schedule, index < s.trials.count else { finishStudy(); return }
+        guard let s = play, index < s.trials.count else { finishStudy(); return }
         collected = []; firstDownMs = nil; lastUpMs = nil
         current = s.trials[index]
+        displayTrial = current
         phase = .ready
         gen += 1
         after(s.readyMs, gen) { [weak self] in self?.showCue() }
     }
 
     private func showCue() {
-        guard let s = schedule else { return }
+        guard let s = play else { return }
         cueOnMs = Self.nowMs()
         lastOutcome = ""; lastMatched = nil
         phase = .cued
         gen += 1
-        after(s.cueTimeoutMs, gen) { [weak self] in self?.finish("timeout") }
+        // Each scene carries its own response window; the play value is only
+        // the fallback for a payload generated before scenes existed.
+        let window = current?.durationMs ?? s.cueTimeoutMs
+        after(window, gen) { [weak self] in self?.finish("timeout") }
     }
 
     private func finish(_ outcome: String) {
-        guard let s = schedule, let t = current else { return }
+        guard let s = play, let t = current else { return }
         gen += 1
 
-        let (observed, ok) = Self.score(trial: t, gestures: collected)
-        let matched = (outcome == "completed") && ok
+        let (observed, verdict) = Self.score(trial: t, gestures: collected)
+        // nil verdict = not verifiable, so it is neither a match nor a failure.
+        let matched: Bool? = verdict.map { (outcome == "completed") && $0 }
+        let g = t.grid(default: s)
 
-        let row = "\(t.i),\(cueOnMs),\(t.row),\(t.col),\(t.type.rawValue),"
-            + "\(t.dir?.rawValue ?? ""),\(t.picture),"
+        let row = "\(t.i),\(cueOnMs),\(t.row),\(t.col),\(t.type),"
+            + "\(t.dir ?? ""),\(t.picture),"
             + "\(firstDownMs.map(String.init) ?? ""),\(lastUpMs.map(String.init) ?? ""),"
-            + "\(outcome),\(observed),\(matched ? 1 : 0)"
+            + "\(outcome),\(observed),\(matched.map { $0 ? "1" : "0" } ?? ""),"
+            + "\(t.tag ?? ""),\(t.durationMs ?? s.cueTimeoutMs),\(g.rows),\(g.cols)"
         onRow?(row)
 
         nDone += 1
-        if matched { nMatched += 1 }
+        if matched == true { nMatched += 1 }
         lastMatched = matched
         lastOutcome = outcome == "timeout"
             ? "no gesture"
-            : (matched ? "matched" : "got \(observed.isEmpty ? "nothing" : observed)")
+            : (matched == nil ? "recorded"
+               : (matched == true ? "matched" : "got \(observed.isEmpty ? "nothing" : observed)"))
 
         phase = .gap
         let gap = Int.random(in: s.gapMinMs...s.gapMaxMs)
@@ -140,16 +157,26 @@ final class TrialRunner: ObservableObject {
 
     // MARK: - Scoring (verification only — the cue is the label)
 
-    static func score(trial: Trial, gestures: [GestureRecord]) -> (String, Bool) {
+    /// Returns the observed label and a verdict. A nil verdict means the gesture
+    /// has no accepted labels in the book and so cannot be auto-verified - the
+    /// trial is still perfectly good data, it just is not scored.
+    static func score(trial: Trial, gestures: [GestureRecord]) -> (String, Bool?) {
+        let accepted = trial.labels
+        guard !accepted.isEmpty else { return (gestures.first?.type ?? "", nil) }
         guard let first = gestures.first else { return ("", false) }
 
-        if trial.type == .double_tap {
+        if trial.type == GType.double_tap.rawValue {
             let taps = gestures.filter { $0.type == "tap" }.count
             return (taps >= 2 ? "double_tap" : first.type, taps >= 2)
         }
 
-        var ok = trial.type.acceptedLabels.contains(first.type)
-        if ok, let d = trial.dir { ok = directionMatches(first, d) }
+        var ok = accepted.contains(first.type)
+        // Geometry can only adjudicate the cardinals. A pinch IN and a pinch OUT
+        // both classify as "pinch"; checking them against dx/dy would reject
+        // every one of them.
+        if ok, trial.dirVerifiable != false, let d = trial.cardinal {
+            ok = directionMatches(first, d)
+        }
         return (first.type, ok)
     }
 

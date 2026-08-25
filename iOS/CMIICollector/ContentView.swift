@@ -15,10 +15,10 @@ struct ContentView: View {
     @State private var showShare = false
     @State private var showConfig = false
     @State private var studyMode = true
-    /// The schedule downloaded for the chosen experiment. nil means the run will
+    /// The play downloaded for the chosen experiment. nil means the run will
     /// fall back to generating one on the device.
-    @State private var loadedSchedule: Schedule?
-    @State private var scheduleStatus = ""
+    @State private var loadedPlay: Play?
+    @State private var playStatus = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -35,16 +35,16 @@ struct ContentView: View {
             runner.onRow = { [weak recorder] row in recorder?.writeTrialRow(row) }
             UIApplication.shared.isIdleTimerDisabled = true   // never sleep mid-session
             recorder.advertiseName = config.advertiseName
-            // Show the cached schedule immediately; the network refresh can be slow
+            // Show the cached play immediately; the network refresh can be slow
             // or absent, and the operator should still see what would run.
-            if config.hasExperiment { loadedSchedule = server.cached(config.experimentId) }
+            if config.hasExperiment { loadedPlay = server.cached(config.experimentId) }
             Task {
                 await server.loadExperiments(base: config.serverBase)
                 if config.hasExperiment {
-                    let (s, msg) = await server.fetchSchedule(base: config.serverBase,
+                    let (s, msg) = await server.fetchPlay(base: config.serverBase,
                                                               experimentId: config.experimentId)
-                    if let s { loadedSchedule = s }
-                    scheduleStatus = msg
+                    if let s { loadedPlay = s }
+                    playStatus = msg
                 }
             }
             // Test hook: lets a simulator run drive the study without a human tap.
@@ -55,7 +55,7 @@ struct ContentView: View {
         .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
         .sheet(isPresented: $showConfig) {
             ConfigView(config: config, server: server, recorder: recorder,
-                       loadedSchedule: $loadedSchedule, scheduleStatus: $scheduleStatus)
+                       loadedPlay: $loadedPlay, playStatus: $playStatus)
                 .onDisappear { recorder.advertiseName = config.advertiseName }
         }
         .sheet(isPresented: $showShare) {
@@ -132,11 +132,11 @@ struct ContentView: View {
                     .fontWeight(config.hasExperiment ? .semibold : .regular)
                     .foregroundStyle(config.hasExperiment ? .primary : .secondary)
 
-                if let s = loadedSchedule {
+                if let s = loadedPlay {
                     Text("· \(s.name) · \(s.trials.count) trials")
                         .foregroundStyle(.secondary)
                 } else if config.hasExperiment {
-                    Text("· no schedule — will generate \(config.fallbackPreset) on device")
+                    Text("· no play — will generate \(config.fallbackPreset) on device")
                         .foregroundStyle(.orange)
                 } else {
                     Text("· will generate \(config.fallbackPreset) on device")
@@ -206,23 +206,23 @@ struct ContentView: View {
 
     // MARK: Phase screens
 
-    /// Prefers the schedule downloaded for the chosen experiment; falls back to
+    /// Prefers the play downloaded for the chosen experiment; falls back to
     /// generating one on the device so a run is never blocked by the network.
     private func startStudy() {
-        let sched: Schedule
+        let play: Play
         let presetLabel: String
-        if let s = loadedSchedule {
-            sched = s
+        if let s = loadedPlay {
+            play = s
             presetLabel = "server:" + s.name
         } else {
             let seed = UInt64(config.fallbackSeed.trimmingCharacters(in: .whitespaces)) ?? 20260826
             let p = Preset(rawValue: config.fallbackPreset) ?? .demo
-            sched = Schedule.make(preset: p, seed: seed)
+            play = Play.make(preset: p, seed: seed)
             presetLabel = p.rawValue
         }
         if !recorder.isRecording { recorder.start() }
-        recorder.writeSessionFiles(schedule: sched, preset: presetLabel, meta: config.snapshot())
-        runner.start(sched)
+        recorder.writeSessionFiles(play: play, preset: presetLabel, meta: config.snapshot())
+        runner.start(play)
     }
 
     @ViewBuilder private var phaseContent: some View {

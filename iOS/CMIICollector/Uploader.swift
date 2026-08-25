@@ -19,7 +19,8 @@ final class Uploader: ObservableObject {
     /// Uploads every file in `dir`. `meta` is attached to the first request so the
     /// server can record participant / study / device without a second endpoint.
     func upload(dir: URL, session: String, base: String,
-                study: String, participant: String, token: String?) async {
+                study: String, participant: String, token: String?,
+                experimentId: Int = 0) async {
         guard !busy else { return }
         busy = true
         defer { busy = false }
@@ -41,7 +42,8 @@ final class Uploader: ObservableObject {
         for (i, f) in files.enumerated() {
             progress = "uploading \(i + 1)/\(files.count) — \(f.lastPathComponent)"
             switch await post(url: url, file: f, session: session, study: study,
-                              participant: participant, token: token) {
+                              participant: participant, token: token,
+                              experimentId: experimentId) {
             case "stored":    ok += 1
             case "duplicate": dup += 1
             default:          failed += 1
@@ -53,7 +55,8 @@ final class Uploader: ObservableObject {
     }
 
     private func post(url: URL, file: URL, session: String, study: String,
-                      participant: String, token: String?) async -> String {
+                      participant: String, token: String?,
+                      experimentId: Int) async -> String {
         guard let data = try? Data(contentsOf: file) else { return "read-error" }
 
         let boundary = "cmii-\(UUID().uuidString)"
@@ -78,6 +81,9 @@ final class Uploader: ObservableObject {
         field("device", UIDevice.current.model + " / iOS " + UIDevice.current.systemVersion)
         field("study", study)
         field("participant", participant)
+        // Lets the server file this session under its experiment on arrival,
+        // instead of it having to be grouped by hand afterwards.
+        if experimentId > 0 { field("experiment", String(experimentId)) }
 
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
         body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(file.lastPathComponent)\"\r\n"
