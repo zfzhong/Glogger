@@ -71,6 +71,17 @@ final class TrialRunner: ObservableObject {
         lastMatched = nil
     }
 
+    /// Where a dragged card actually landed, reported by the grid.
+    ///
+    /// This is app-level ground truth: the classifier can say "scroll" for a drag,
+    /// but only the board knows whether the card reached the block the scene asked
+    /// for. nil means it was thrown without landing anywhere.
+    private(set) var droppedOn: Int?
+
+    func cardDropped(from: Int, to: Int?) {
+        droppedOn = to
+    }
+
     // MARK: - Inputs from the Recorder (main thread)
 
     func touchDown(wallMs: Int) {
@@ -95,7 +106,7 @@ final class TrialRunner: ObservableObject {
 
     private func beginReady() {
         guard let s = play, index < s.trials.count else { finishStudy(); return }
-        collected = []; firstDownMs = nil; lastUpMs = nil
+        collected = []; firstDownMs = nil; lastUpMs = nil; droppedOn = nil
         current = s.trials[index]
         displayTrial = current
         phase = .ready
@@ -119,7 +130,8 @@ final class TrialRunner: ObservableObject {
         guard let s = play, let t = current else { return }
         gen += 1
 
-        let (observed, verdict) = Self.score(trial: t, gestures: collected)
+        var (observed, verdict) = Self.score(trial: t, gestures: collected)
+        if let landed = landedCorrectly(t, s) { verdict = landed }
         // nil verdict = not verifiable, so it is neither a match nor a failure.
         let matched: Bool? = verdict.map { (outcome == "completed") && $0 }
         let g = t.grid(default: s)
@@ -178,6 +190,15 @@ final class TrialRunner: ObservableObject {
             ok = directionMatches(first, d)
         }
         return (first.type, ok)
+    }
+
+    /// For a travelling scene, where the card ended is better evidence than which
+    /// way the stroke went: a short drag in roughly the right direction used to
+    /// score as a match even if it stopped halfway.
+    private func landedCorrectly(_ t: Trial, _ s: Play) -> Bool? {
+        guard t.isTravelling, let want = t.toRow, let wantC = t.toCol else { return nil }
+        guard let got = droppedOn else { return false }
+        return got == want * t.grid(default: s).cols + wantC
     }
 
     static func directionMatches(_ g: GestureRecord, _ d: GDir) -> Bool {

@@ -123,13 +123,24 @@ struct DeckState: Equatable {
     var discarded = 0          // cards flicked away, revealing the one beneath
     var faceUp = false         // top card flipped
     var peeking = false        // held down: face shown until release
+    var received: [String] = []  // cards dragged onto this deck from elsewhere
 
     var showsFace: Bool { faceUp || peeking }
 }
 
 /// What the deck actually did, independent of what the classifier decided.
 enum DeckEvent: String {
-    case flip, unflip, peek, peekEnd, discard
+    case flip, unflip, peek, peekEnd, discard, pickUp, dropped, dropMissed
+}
+
+/// Cell frames in the grid's coordinate space, so a dragged card can be drawn
+/// above every block and the drop target worked out from where it was released.
+/// A card dragged inside its own cell would be clipped by the neighbouring block.
+struct CellFrameKey: PreferenceKey {
+    static var defaultValue: [Int: CGRect] = [:]
+    static func reduce(value: inout [Int: CGRect], nextValue: () -> [Int: CGRect]) {
+        value.merge(nextValue()) { _, b in b }
+    }
 }
 
 // MARK: - View
@@ -145,13 +156,20 @@ struct CardDeckView: View {
     /// does nothing.
     let interactive: Bool
     let cardSize: CGFloat
+    /// True while this deck's top card is being carried; the card is drawn by the
+    /// grid overlay instead, so the original is hidden rather than duplicated.
+    var carrying: Bool = false
     @Binding var state: DeckState
     var onEvent: (DeckEvent) -> Void = { _ in }
+    var onDragChanged: (CGSize) -> Void = { _ in }
+    var onDragEnded: (CGSize, CGSize) -> Void = { _, _ in }
 
     private var back: DeckBack { DeckBack.forBlock(block) }
-    private var depth: Int { max(1, animals.count - state.discarded) }
-    private var topAnimal: String {
-        animals.isEmpty ? "pawprint.fill" : animals[min(state.discarded, animals.count - 1)]
+    private var depth: Int { max(1, animals.count - state.discarded) + state.received.count }
+    var topAnimal: String {
+        if let last = state.received.last { return last }
+        return animals.isEmpty ? "pawprint.fill"
+                               : animals[min(state.discarded, animals.count - 1)]
     }
 
     var body: some View {
@@ -167,8 +185,9 @@ struct CardDeckView: View {
                 .rotation3DEffect(.degrees(state.showsFace ? 180 : 0),
                                   axis: (x: 0, y: 1, z: 0))
                 .animation(.easeInOut(duration: 0.22), value: state.showsFace)
+                .opacity(carrying ? 0 : 1)
                 .allowsHitTesting(interactive)
-                .gesture(flick)
+                .gesture(drag)
                 .onTapGesture(count: 2) { set(.unflip) }        // must precede single
                 .onTapGesture { set(.flip) }
                 .onLongPressGesture(minimumDuration: 0.35, pressing: { down in
@@ -180,20 +199,17 @@ struct CardDeckView: View {
         .animation(.easeOut(duration: 0.18), value: state.discarded)
     }
 
-    /// A flick discards the top card. Judged on predicted end translation rather
-    /// than distance travelled, which is what separates a flick from a slow drag.
-    private var flick: some Gesture {
-        DragGesture(minimumDistance: 18)
-            .onEnded { v in
-                let pred = hypot(v.predictedEndTranslation.width,
-                                 v.predictedEndTranslation.height)
-                if pred > 120, state.discarded < animals.count - 1 {
-                    state.discarded += 1
-                    state.faceUp = false
-                    onEvent(.discard)
-                }
-            }
+    /// One gesture serves both flick and drag - they start identically. Where it
+    /// ends up decides: released over another block it is a drop, otherwise a
+    /// fast throw is a flick. The grid owns that decision because only it knows
+    /// where the other blocks are.
+    private var drag: some Gesture {
+        DragGesture(minimumDistance: 14)
+            .onChanged { v in onDragChanged(v.translation) }
+            .onEnded { v in onDragEnded(v.translation, v.predictedEndTranslation) }
     }
+
+
 
     private func set(_ e: DeckEvent) {
         switch e {
@@ -206,6 +222,21 @@ struct CardDeckView: View {
 
     @ViewBuilder
     private func cardShape(faceUp: Bool, animal: String) -> some View {
+        CardFace(back: back, faceUp: faceUp, animal: animal,
+                 cardSize: cardSize, lifted: live)
+    }
+}
+
+/// One card. Standalone so the grid can draw a floating copy under the finger -
+/// a card dragged inside its own cell would be clipped by the next block.
+struct CardFace: View {
+    let back: DeckBack
+    let faceUp: Bool
+    let animal: String
+    let cardSize: CGFloat
+    var lifted: Bool = false
+
+    var body: some View {
         let r = cardSize * 0.11
         ZStack {
             RoundedRectangle(cornerRadius: r)
@@ -224,7 +255,7 @@ struct CardDeckView: View {
                 .strokeBorder(faceUp ? back.deep.opacity(0.5) : Color.black.opacity(0.18),
                               lineWidth: 2)
         }
-        .shadow(color: .black.opacity(live ? 0.22 : 0.12),
-                radius: live ? 6 : 3, x: 0, y: 2)
+        .shadow(color: .black.opacity(lifted ? 0.22 : 0.12),
+                radius: lifted ? 6 : 3, x: 0, y: 2)
     }
 }

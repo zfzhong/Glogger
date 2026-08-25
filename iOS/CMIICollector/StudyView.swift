@@ -17,6 +17,10 @@ struct StudyView: View {
     /// participant sees on trial 20 is identical to the one on trial 2 - otherwise
     /// flicked-down decks accumulate and the visual scene drifts through a session.
     @State private var decks: [Int: DeckState] = [:]
+    /// Cell frames in the grid's coordinate space, so a carried card can be drawn
+    /// above every block and the drop target resolved from where it was released.
+    @State private var frames: [Int: CGRect] = [:]
+    @State private var carry: (block: Int, offset: CGSize)?
 
     /// Grid shape comes from the SCENE, falling back to the play default.
     ///
@@ -38,7 +42,7 @@ struct StudyView: View {
         }
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onChange(of: runner.index) { _, _ in decks = [:] }
+        .onChange(of: runner.index) { _, _ in decks = [:]; carry = nil }
         .onChange(of: runner.phase) { _, p in if p == .idle { decks = [:] } }
     }
 
@@ -109,6 +113,65 @@ struct StudyView: View {
                     }
                 }
             }
+        }
+        .coordinateSpace(name: "grid")
+        .onPreferenceChange(CellFrameKey.self) { frames = $0 }
+        .overlay(alignment: .topLeading) { carriedCard }
+    }
+
+    /// The card under the finger. Drawn here rather than in its cell so it can
+    /// pass over the other blocks instead of being clipped by them.
+    @ViewBuilder private var carriedCard: some View {
+        if let carry, let f = frames[carry.block] {
+            let st = decks[carry.block] ?? DeckState()
+            let side = min(f.width * 0.66, f.height / 1.35 * 0.82)
+            CardFace(back: DeckBack.forBlock(carry.block),
+                     faceUp: st.showsFace,
+                     animal: topAnimal(of: carry.block, state: st),
+                     cardSize: max(40, side), lifted: true)
+                .frame(width: max(40, side), height: max(40, side) * 1.35)
+                .position(x: f.midX + carry.offset.width,
+                          y: f.midY + carry.offset.height)
+                .shadow(color: .black.opacity(0.32), radius: 16, x: 0, y: 10)
+                .allowsHitTesting(false)
+        }
+    }
+
+    private func topAnimal(of block: Int, state st: DeckState) -> String {
+        if let last = st.received.last { return last }
+        let a = deckAnimals(block)
+        return a[min(st.discarded, a.count - 1)]
+    }
+
+    /// Which block a release landed in, in grid coordinates.
+    private func blockAt(_ p: CGPoint) -> Int? {
+        frames.first { $0.value.contains(p) }?.key
+    }
+
+    private func endCarry(from src: Int, translation: CGSize, predicted: CGSize) {
+        defer { carry = nil }
+        guard let f = frames[src] else { return }
+        let end = CGPoint(x: f.midX + translation.width, y: f.midY + translation.height)
+        var st = decks[src] ?? DeckState()
+        let animal = topAnimal(of: src, state: st)
+
+        if let target = blockAt(end), target != src {
+            // Landed on another block: the card moves there.
+            st.discarded = min(st.discarded + 1, max(0, deckAnimals(src).count - 1))
+            st.faceUp = false
+            decks[src] = st
+            var dst = decks[target] ?? DeckState()
+            dst.received.append(animal)
+            decks[target] = dst
+            runner.cardDropped(from: src, to: target)
+        } else if hypot(predicted.width, predicted.height) > 120 {
+            // Thrown, but not onto anything: a flick discards the top card.
+            if st.discarded < deckAnimals(src).count - 1 {
+                st.discarded += 1
+                st.faceUp = false
+                decks[src] = st
+            }
+            runner.cardDropped(from: src, to: nil)
         }
     }
 
@@ -184,16 +247,27 @@ struct StudyView: View {
                 GeometryReader { geo in
                     let w = geo.size.width, h = geo.size.height
                     let side = min(w * 0.66, h / 1.35 * 0.82)
+                    let b = r * cols + c
                     CardDeckView(
-                        block: r * cols + c,
-                        animals: deckAnimals(r * cols + c),
+                        block: b,
+                        animals: deckAnimals(b),
                         live: live,
                         interactive: live,
                         cardSize: max(40, side),
+                        carrying: carry?.block == b,
                         state: Binding(
-                            get: { decks[r * cols + c] ?? DeckState() },
-                            set: { decks[r * cols + c] = $0 }))
+                            get: { decks[b] ?? DeckState() },
+                            set: { decks[b] = $0 }),
+                        onDragChanged: { off in carry = (b, off) },
+                        onDragEnded: { tr, pred in
+                            endCarry(from: b, translation: tr, predicted: pred)
+                        })
                         .frame(width: w, height: h)
+                        .background(GeometryReader { g in
+                            Color.clear.preference(
+                                key: CellFrameKey.self,
+                                value: [b: g.frame(in: .named("grid"))])
+                        })
                 }
                     .scaleEffect(live ? 1.0 : 0.94)
                     .opacity(dest ? 0.55 : 1)      // the drop target, not the thing to grab
