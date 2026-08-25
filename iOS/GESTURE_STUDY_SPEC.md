@@ -47,6 +47,10 @@ between-person signal. Direction is scheduled and balanced like everything else.
 cycle; at ~4 s per trial plus a ~2 s gap that is **~7 minutes**. Feasible for adults, likely
 at the edge for children — hence configurable repetitions and the ability to run a subset.
 
+> **The target affordance column above is superseded.** Blocks are becoming decks
+> of animal cards, so every gesture acts on one object rather than needing its own
+> widget - see `CARD_DECK_DESIGN.md`. Designed, not yet built.
+
 Note the two verification gaps (`double_tap`, `drag`). They do not block labelling, because
 the cue is the label. Closing them later only improves the `match` check.
 
