@@ -188,6 +188,7 @@ struct StudyView: View {
                         block: r * cols + c,
                         animals: deckAnimals(r * cols + c),
                         live: live,
+                        interactive: live,
                         cardSize: max(40, side),
                         state: Binding(
                             get: { decks[r * cols + c] ?? DeckState() },

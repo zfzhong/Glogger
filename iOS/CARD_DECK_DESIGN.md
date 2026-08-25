@@ -47,6 +47,10 @@ already carried on the scene as `toRow`/`toCol`.
   4x4, where a fine pattern alone turns to grey mush. The texture gives each deck a
   nameable identity and keeps it distinguishable in a greyscale screenshot.
 - **The cued deck is highlighted**, as today: accent border and tinted fill.
+- **Only the cued deck responds.** A non-target deck ignores taps, flicks and
+  presses, so nothing rewards going to the wrong block. Off-target touches are
+  still recorded - TouchLogger sits on the window, so the data survives even
+  though the card does nothing.
 
 ## Two decisions that are easy to get wrong
 

@@ -138,6 +138,12 @@ struct CardDeckView: View {
     let block: Int
     let animals: [String]
     let live: Bool
+    /// Only the cued deck responds. A non-target deck that flipped when tapped
+    /// would reward tapping the wrong one, and the point of the cue is that the
+    /// participant goes to the right block. Off-target taps are still recorded -
+    /// TouchLogger sits on the window, so the data is kept even though the card
+    /// does nothing.
+    let interactive: Bool
     let cardSize: CGFloat
     @Binding var state: DeckState
     var onEvent: (DeckEvent) -> Void = { _ in }
@@ -161,6 +167,7 @@ struct CardDeckView: View {
                 .rotation3DEffect(.degrees(state.showsFace ? 180 : 0),
                                   axis: (x: 0, y: 1, z: 0))
                 .animation(.easeInOut(duration: 0.22), value: state.showsFace)
+                .allowsHitTesting(interactive)
                 .gesture(flick)
                 .onTapGesture(count: 2) { set(.unflip) }        // must precede single
                 .onTapGesture { set(.flip) }
