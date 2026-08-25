@@ -34,14 +34,32 @@ the children in the pilot.
 `swipe` stays ballistic (no destination); `drag` travels to the destination deck
 already carried on the scene as `toRow`/`toCol`.
 
+## Settled parameters
+
+- **Deck depth 5**, five different animals per deck. With per-trial reset a deck
+  only has to survive one scene, and the most any scene consumes is one card, so 5
+  is generous - it is chosen for how a stack of 5 renders (visible offset edges,
+  not cluttered) rather than for capacity. Faces repeat across decks; there are
+  only 11 symbols in the pool and the backs carry deck identity anyway.
+- **Backs are colour plus texture**, one pairing per deck, stable for the session.
+  Colour survives the cell shrinking - artwork drops to 100pt at 3x3 and 70pt at
+  4x4, where a fine pattern alone turns to grey mush. The texture gives each deck a
+  nameable identity and keeps it distinguishable in a greyscale screenshot.
+- **The cued deck is highlighted**, as today: accent border and tinted fill.
+
 ## Two decisions that are easy to get wrong
 
-**Decks must stay tellable apart while face-down.** The search task - the
-participant finding the cued deck - only works because the blocks currently show
-different animals. Face-down cards are identical, and search would collapse to
-"look for the highlight". So **each deck has its own card back**: a distinct colour
-plus a small icon, stable for the whole session. The animal on the face stays the
-reward for flipping, not the identifier.
+**How much the backs have to carry depends on how the target is cued, and the
+choice is: highlight.** An earlier draft of this document claimed that face-down
+cards would collapse the search task. That was overstated. Because the cue is a
+highlight rather than a spoken name, the participant looks for the glow and the
+backs are not the experimental stimulus - they only need to look like distinct
+decks. Colour plus texture is comfortably enough for that.
+
+The alternative - naming the target ("flip a card in the striped deck") and
+removing the highlight - would make the backs load-bearing and add a genuine
+visual-search phase before the motor act. Deliberately not taken for now: it
+changes trial timing and risks timeouts. Worth revisiting as its own condition.
 
 **Deck state resets at the start of every scene.** Otherwise the board drifts: a
 deck that has been flicked four times looks nothing like a fresh one, trial 20 is
