@@ -122,6 +122,11 @@ struct Trial: Codable, Identifiable {
     var affordance: String? = nil
     /// A travelling gesture ends on a different block. Drag does; a flick is
     /// ballistic and a scroll stays inside its own block.
+    /// An off-screen scene asks for something away from the tablet - reaching for
+    /// the water bottle, resting. The board is shadowed and inert and the screen
+    /// carries the prompt instead of a cue.
+    var offscreen: Bool? = nil
+    var prompt: String? = nil
     var travels: Bool? = nil
     var toRow: Int? = nil
     var toCol: Int? = nil
@@ -164,9 +169,15 @@ struct Trial: Codable, Identifiable {
         (max(1, rows ?? s.rows), max(1, cols ?? s.cols))
     }
     func block(default s: Play) -> Int { row * grid(default: s).cols + col }
+    var isOffscreen: Bool { offscreen == true }
+    var promptText: String {
+        let p = (prompt ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return p.isEmpty ? displayVerb : p
+    }
     var isTravelling: Bool { travels == true && toRow != nil && toCol != nil }
 
     var cueText: String {
+        if isOffscreen { return promptText }
         // A travelling scene shows its destination on screen, so naming the
         // direction as well is redundant - the target says where to go.
         if isTravelling { return displayVerb }

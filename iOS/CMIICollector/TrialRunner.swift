@@ -108,7 +108,9 @@ final class TrialRunner: ObservableObject {
         // Using wallMs directly made first_down_ms == last_up_ms and left every trial
         // with a zero-width time window - useless for slicing the watch IMU stream.
         lastUpMs = rec.wallMs + Int(rec.durMs.rounded())
-        guard phase == .cued, let s = play else { return }
+        // An off-screen scene runs its whole slot: the participant is away from
+        // the tablet, and a stray touch must not cut the window short.
+        guard phase == .cued, let s = play, current?.isOffscreen != true else { return }
         gen += 1                                   // cancel the cue timeout
         phase = .settling
         after(s.settleMs, gen) { [weak self] in self?.finish("completed") }
@@ -135,7 +137,10 @@ final class TrialRunner: ObservableObject {
         // Each scene carries its own response window; the play value is only
         // the fallback for a payload generated before scenes existed.
         let window = current?.durationMs ?? s.cueTimeoutMs
-        after(window, gen) { [weak self] in self?.finish("timeout") }
+        // "timeout" would read as 22 failures in a session full of water breaks.
+        // Nothing was expected on screen; the window simply ended.
+        let ending = current?.isOffscreen == true ? "elapsed" : "timeout"
+        after(window, gen) { [weak self] in self?.finish(ending) }
     }
 
     private func finish(_ outcome: String) {

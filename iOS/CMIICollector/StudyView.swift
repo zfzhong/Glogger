@@ -38,7 +38,13 @@ struct StudyView: View {
     var body: some View {
         VStack(spacing: 18) {
             header
-            gridView
+            ZStack {
+                gridView
+                    .opacity(offscreenScene == nil ? 1 : 0.18)
+                    .allowsHitTesting(offscreenScene == nil)
+                    .animation(.easeInOut(duration: 0.25), value: offscreenScene == nil)
+                if let t = offscreenScene { offscreenPrompt(t) }
+            }
         }
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -65,7 +71,7 @@ struct StudyView: View {
             ProgressView(value: Double(runner.nDone),
                          total: Double(max(runner.total, 1)))
 
-            Text(bannerText)
+            Text(offscreenScene == nil ? bannerText : "")
                 .font(.system(size: 40, weight: .bold, design: .rounded))
                 .foregroundStyle(bannerColor)
                 .frame(maxWidth: .infinity, minHeight: 56)
@@ -93,6 +99,28 @@ struct StudyView: View {
         case .done: return .green
         default: return .secondary
         }
+    }
+
+    /// What the participant reads when the scene is away from the tablet.
+    @ViewBuilder private func offscreenPrompt(_ t: Trial) -> some View {
+        VStack(spacing: 22) {
+            Image(systemName: "figure.walk.motion")
+                .font(.system(size: 54, weight: .light))
+                .foregroundStyle(.secondary)
+            Text(t.promptText)
+                .font(.system(size: 40, weight: .semibold, design: .rounded))
+                .multilineTextAlignment(.center)
+                .lineSpacing(6)
+                .frame(maxWidth: 760)
+        }
+        .padding(44)
+        .background(
+            RoundedRectangle(cornerRadius: 28)
+                .fill(.background)
+                .shadow(color: .black.opacity(0.12), radius: 24, y: 8))
+        .overlay(RoundedRectangle(cornerRadius: 28)
+                    .strokeBorder(.secondary.opacity(0.25), lineWidth: 1))
+        .transition(.opacity)
     }
 
     // MARK: Grid
@@ -172,7 +200,18 @@ struct StudyView: View {
     private func isLive(_ r: Int, _ c: Int) -> Bool {
         guard let t = runner.current, runner.phase == .cued || runner.phase == .settling
         else { return false }
+        // An off-screen scene still carries a row and column from the generator,
+        // but lighting a deck would contradict the prompt telling the participant
+        // to leave the tablet alone.
+        if t.isOffscreen { return false }
         return t.row == r && t.col == c
+    }
+
+    private var offscreenScene: Trial? {
+        guard let t = runner.current, t.isOffscreen,
+              runner.phase == .ready || runner.phase == .cued
+                || runner.phase == .settling else { return nil }
+        return t
     }
 
     /// Where a travelling gesture has to end up. Drawn as a distinct target so
