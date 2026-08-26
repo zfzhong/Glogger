@@ -6,6 +6,7 @@
 //    <name>_touches_raw.csv   wall_ms,kernel_ts,touch_id,phase,x,y,force,major_radius,study_phase
 //                             (full stream — the source-of-truth analog to getevent.log)
 //    <name>_gestures.csv      14-col schema from GestureClassifier (matches the pipeline)
+//    <name>_deck.csv          wall_ms,trial_idx,block,event,animal,to_block
 //    <name>_ble.csv           wall_ms,name,uuid,rssi
 //
 //  taps.csv and gestures.csv are byte-schema-compatible with the existing Python
@@ -40,6 +41,7 @@ final class Recorder: ObservableObject {
     private var trialsFile: FileHandle?
     private var rawFile: FileHandle?
     private var gestFile: FileHandle?
+    private var deckFile: FileHandle?
     private var bleFile: FileHandle?
 
     private let scanner = BLEScanner()
@@ -70,6 +72,10 @@ final class Recorder: ObservableObject {
         tapsFile = openFile(dir, "_taps.csv",        header: "tablet_wall_ms,kernel_ts,x,y")
         rawFile  = openFile(dir, "_touches_raw.csv", header: "wall_ms,kernel_ts,touch_id,phase,x,y,force,major_radius,study_phase")
         gestFile = openFile(dir, "_gestures.csv",    header: GestureRecord.header)
+        // App-level ground truth: what the board actually did. Independent of the
+        // classifier, which only ever infers from the stroke.
+        deckFile = openFile(dir, "_deck.csv",
+                            header: "wall_ms,trial_idx,block,event,animal,to_block")
         bleFile  = openFile(dir, "_ble.csv",         header: "wall_ms,name,uuid,rssi")
         trialsFile = openFile(dir, "_trials.csv",    header: TrialRunner.csvHeader)
         // One file per sensor, matching the watch-side convention (Pixel02_CMII_Accel_*).
@@ -137,9 +143,10 @@ final class Recorder: ObservableObject {
         advertiser.stop()
         nImu = motion.nSamples
         imuQueue.sync { }                       // drain queued IMU writes before closing
-        for f in [tapsFile, rawFile, gestFile, bleFile, trialsFile,
+        for f in [tapsFile, rawFile, gestFile, deckFile, bleFile, trialsFile,
                   accelFile, gyroFile, magFile] { try? f?.close() }
-        tapsFile = nil; rawFile = nil; gestFile = nil; bleFile = nil; trialsFile = nil
+        tapsFile = nil; rawFile = nil; gestFile = nil; deckFile = nil
+        bleFile = nil; trialsFile = nil
         accelFile = nil; gyroFile = nil; magFile = nil
         status = "Saved \(nTaps) taps, \(nGestures) gestures, \(nBle) BLE, \(nImu) IMU → \(sessionName)"
     }
@@ -185,6 +192,9 @@ final class Recorder: ObservableObject {
     }
 
     // MARK: - Study outputs
+
+    /// One row per thing the board did - a card flipped, discarded, carried away.
+    func writeDeckRow(_ line: String) { append(deckFile, line) }
 
     func writeTrialRow(_ row: String) { append(trialsFile, row) }
 

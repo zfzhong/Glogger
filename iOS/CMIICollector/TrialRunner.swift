@@ -35,6 +35,7 @@ final class TrialRunner: ObservableObject {
 
     /// One CSV row per finished trial.
     var onRow: ((String) -> Void)?
+    var onDeckRow: ((String) -> Void)?
     var onFinished: (() -> Void)?
 
     private var gen = 0                 // invalidates stale timers
@@ -78,8 +79,19 @@ final class TrialRunner: ObservableObject {
     /// for. nil means it was thrown without landing anywhere.
     private(set) var droppedOn: Int?
 
-    func cardDropped(from: Int, to: Int?) {
+    /// Emits a row and keeps the landing for scoring.
+    func cardDropped(from: Int, to: Int?, animal: String) {
         droppedOn = to
+        deckRow(block: from, event: to == nil ? "dropMissed" : "dropped",
+                animal: animal, toBlock: to)
+    }
+
+    /// One row per thing the board did. This is the strongest evidence the
+    /// intended interaction happened - stronger than the classifier, which only
+    /// ever infers from the stroke.
+    func deckRow(block: Int, event: String, animal: String, toBlock: Int? = nil) {
+        onDeckRow?("\(Self.nowMs()),\(index),\(block),\(event),\(animal),"
+                   + "\(toBlock.map(String.init) ?? "")")
     }
 
     // MARK: - Inputs from the Recorder (main thread)

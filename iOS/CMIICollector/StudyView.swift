@@ -57,9 +57,10 @@ struct StudyView: View {
                     .font(.title3.weight(.medium))
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text("\(runner.nMatched)/\(runner.nDone) matched")
-                    .font(.system(.title3, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                // No verdict on this screen. A participant who is told they got it
+                // wrong performs the next gesture differently; the operator sees the
+                // live classification on the Mac instead.
+                Text("")
             }
             ProgressView(value: Double(runner.nDone),
                          total: Double(max(runner.total, 1)))
@@ -80,22 +81,15 @@ struct StudyView: View {
         case .cued, .settling:
             guard let t = runner.current else { return "" }
             return t.cueText
-        case .gap:   return runner.lastOutcome
-        case .done:  return "Done — \(runner.nMatched)/\(runner.nDone) matched"
+        case .gap:   return ""
+        case .done:  return "All done — thank you"
         }
     }
 
     private var bannerColor: Color {
         switch runner.phase {
         case .cued, .settling: return .primary
-        // Three states: matched, missed, and not verifiable. An unscored gesture
-        // must not be painted like a failure - nothing went wrong.
-        case .gap:
-            switch runner.lastMatched {
-            case .some(true): return .green
-            case .some(false): return .orange
-            case nil: return .secondary
-            }
+        case .gap: return .secondary
         case .done: return .green
         default: return .secondary
         }
@@ -163,7 +157,7 @@ struct StudyView: View {
             var dst = decks[target] ?? DeckState()
             dst.received.append(animal)
             decks[target] = dst
-            runner.cardDropped(from: src, to: target)
+            runner.cardDropped(from: src, to: target, animal: animal)
         } else if hypot(predicted.width, predicted.height) > 120 {
             // Thrown, but not onto anything: a flick discards the top card.
             if st.discarded < deckAnimals(src).count - 1 {
@@ -171,7 +165,7 @@ struct StudyView: View {
                 st.faceUp = false
                 decks[src] = st
             }
-            runner.cardDropped(from: src, to: nil)
+            runner.cardDropped(from: src, to: nil, animal: animal)
         }
     }
 
@@ -217,10 +211,11 @@ struct StudyView: View {
         let live = isLive(r, c)
         let dest = isDestination(r, c)
         let flashing = isFlashing(r, c)
-        let verdict = runner.lastMatched            // nil = not verifiable
-        let flashTint: Color = verdict == nil ? .secondary : (verdict! ? .green : .orange)
+        // Neutral flash: acknowledges the block that was acted on without saying
+        // whether it was right.
+        let flashTint: Color = .secondary
 
-        let fill: Color = flashing ? flashTint.opacity(0.22)
+        let fill: Color = flashing ? flashTint.opacity(0.18)
                                    : (live ? Color.accentColor.opacity(0.16)
                                      : (dest ? Color.green.opacity(0.12)
                                              : Color.gray.opacity(0.10)))
@@ -258,6 +253,10 @@ struct StudyView: View {
                         state: Binding(
                             get: { decks[b] ?? DeckState() },
                             set: { decks[b] = $0 }),
+                        onEvent: { e in
+                            runner.deckRow(block: b, event: e.rawValue,
+                                           animal: topAnimal(of: b, state: decks[b] ?? DeckState()))
+                        },
                         onDragChanged: { off in carry = (b, off) },
                         onDragEnded: { tr, pred in
                             endCarry(from: b, translation: tr, predicted: pred)

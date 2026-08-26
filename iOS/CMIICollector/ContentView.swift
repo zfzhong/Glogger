@@ -33,6 +33,7 @@ struct ContentView: View {
             recorder.onTouchDown = { [weak runner] wall in runner?.touchDown(wallMs: wall) }
             recorder.onGestureRecord = { [weak runner] rec in runner?.gesture(rec) }
             runner.onRow = { [weak recorder] row in recorder?.writeTrialRow(row) }
+            runner.onDeckRow = { [weak recorder] row in recorder?.writeDeckRow(row) }
             UIApplication.shared.isIdleTimerDisabled = true   // never sleep mid-session
             recorder.advertiseName = config.advertiseName
             // Show the cached play immediately; the network refresh can be slow
