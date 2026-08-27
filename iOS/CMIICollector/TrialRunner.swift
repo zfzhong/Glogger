@@ -110,7 +110,7 @@ final class TrialRunner: ObservableObject {
         lastUpMs = rec.wallMs + Int(rec.durMs.rounded())
         // An off-screen scene runs its whole slot: the participant is away from
         // the tablet, and a stray touch must not cut the window short.
-        guard phase == .cued, let s = play, current?.isOffscreen != true else { return }
+        guard phase == .cued, let s = play, current?.isFreeform != true else { return }
         gen += 1                                   // cancel the cue timeout
         phase = .settling
         after(s.settleMs, gen) { [weak self] in self?.finish("completed") }
@@ -139,7 +139,7 @@ final class TrialRunner: ObservableObject {
         let window = current?.durationMs ?? s.cueTimeoutMs
         // "timeout" would read as 22 failures in a session full of water breaks.
         // Nothing was expected on screen; the window simply ended.
-        let ending = current?.isOffscreen == true ? "elapsed" : "timeout"
+        let ending = current?.isFreeform == true ? "elapsed" : "timeout"
         after(window, gen) { [weak self] in self?.finish(ending) }
     }
 

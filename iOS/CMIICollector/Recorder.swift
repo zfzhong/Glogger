@@ -3,10 +3,13 @@
 //  Session state + CSV writers. Produces, per session folder in Documents:
 //
 //    <name>_taps.csv          tablet_wall_ms,kernel_ts,x,y            (one row per touch-down)
-//    <name>_touches_raw.csv   wall_ms,kernel_ts,touch_id,phase,x,y,force,major_radius,study_phase
+//    <name>_touches_raw.csv   wall_ms,kernel_ts,touch_id,phase,x,y,force,major_radius,study_phase,kbd
+//                             kbd=1 means a keyboard was on screen and x,y are blank:
+//                             coordinates over a keyboard are the text being typed.
 //                             (full stream — the source-of-truth analog to getevent.log)
 //    <name>_gestures.csv      14-col schema from GestureClassifier (matches the pipeline)
 //    <name>_deck.csv          wall_ms,trial_idx,block,event,animal,to_block
+//    <name>_web.csv           wall_ms,trial_idx,event,detail   (web scenes only)
 //    <name>_ble.csv           wall_ms,name,uuid,rssi
 //
 //  taps.csv and gestures.csv are byte-schema-compatible with the existing Python
@@ -26,6 +29,12 @@ final class Recorder: ObservableObject {
     @Published var nGestures = 0
     @Published var nBle = 0
     @Published var nImu = 0
+    /// True while a system keyboard is on screen. Touch COORDINATES are withheld
+    /// for the duration: on a keyboard they are the characters being typed, and
+    /// this corpus includes recordings of children. Timing, duration and pressure
+    /// are still recorded, which is what the wrist-side detector is trained
+    /// against - so nothing the study needs is lost.
+    private(set) var keyboardUp = false
     @Published var advertise = true          // tablet acts as the beacon for the watch
     /// Slogger on the watch filters by DEVICE NAME, not service UUID
     /// (EXPERIMENT_PROTOCOL.md §Software configuration), so this must match the
@@ -42,6 +51,7 @@ final class Recorder: ObservableObject {
     private var rawFile: FileHandle?
     private var gestFile: FileHandle?
     private var deckFile: FileHandle?
+    private var webFile: FileHandle?
     private var bleFile: FileHandle?
 
     private let scanner = BLEScanner()
@@ -54,6 +64,8 @@ final class Recorder: ObservableObject {
     private let assembler = StrokeAssembler(thr: .default)
     private var touchSlot: [ObjectIdentifier: Int] = [:]   // stable small ids for the raw log
     private var nextSlot = 0
+
+    init() { watchKeyboard() }
 
     static func defaultName() -> String {
         let f = DateFormatter(); f.dateFormat = "MMdd_HHmm"
@@ -70,10 +82,13 @@ final class Recorder: ObservableObject {
         sessionDir = dir
 
         tapsFile = openFile(dir, "_taps.csv",        header: "tablet_wall_ms,kernel_ts,x,y")
-        rawFile  = openFile(dir, "_touches_raw.csv", header: "wall_ms,kernel_ts,touch_id,phase,x,y,force,major_radius,study_phase")
+        rawFile  = openFile(dir, "_touches_raw.csv", header: "wall_ms,kernel_ts,touch_id,phase,x,y,force,major_radius,study_phase,kbd")
         gestFile = openFile(dir, "_gestures.csv",    header: GestureRecord.header)
         // App-level ground truth: what the board actually did. Independent of the
         // classifier, which only ever infers from the stroke.
+        // What a web scene actually showed. Without it a five-minute block of
+        // touches has no record of what was under the finger.
+        webFile  = openFile(dir, "_web.csv", header: "wall_ms,trial_idx,event,detail")
         deckFile = openFile(dir, "_deck.csv",
                             header: "wall_ms,trial_idx,block,event,animal,to_block")
         bleFile  = openFile(dir, "_ble.csv",         header: "wall_ms,name,uuid,rssi")
@@ -143,12 +158,24 @@ final class Recorder: ObservableObject {
         advertiser.stop()
         nImu = motion.nSamples
         imuQueue.sync { }                       // drain queued IMU writes before closing
-        for f in [tapsFile, rawFile, gestFile, deckFile, bleFile, trialsFile,
+        for f in [tapsFile, rawFile, gestFile, deckFile, webFile, bleFile, trialsFile,
                   accelFile, gyroFile, magFile] { try? f?.close() }
-        tapsFile = nil; rawFile = nil; gestFile = nil; deckFile = nil
+        tapsFile = nil; rawFile = nil; gestFile = nil; deckFile = nil; webFile = nil
         bleFile = nil; trialsFile = nil
         accelFile = nil; gyroFile = nil; magFile = nil
         status = "Saved \(nTaps) taps, \(nGestures) gestures, \(nBle) BLE, \(nImu) IMU → \(sessionName)"
+    }
+
+    // MARK: - Keyboard
+
+    /// Watched for the whole life of the recorder, not just while recording, so
+    /// the flag is already correct when a session starts with a keyboard up.
+    private func watchKeyboard() {
+        let c = NotificationCenter.default
+        c.addObserver(forName: UIResponder.keyboardWillShowNotification,
+                      object: nil, queue: .main) { [weak self] _ in self?.keyboardUp = true }
+        c.addObserver(forName: UIResponder.keyboardDidHideNotification,
+                      object: nil, queue: .main) { [weak self] _ in self?.keyboardUp = false }
     }
 
     // MARK: - Touch ingestion (called from TouchRecognizer on the main thread)
@@ -171,9 +198,19 @@ final class Recorder: ObservableObject {
         }
 
         let slot = touchSlot[id] ?? { let s = nextSlot; nextSlot += 1; touchSlot[id] = s; return s }()
+        let xy = keyboardUp ? "," : "\(Int(x.rounded())),\(Int(y.rounded()))"
         append(rawFile, "\(wall),\(fmt6(kts)),\(slot),\(phaseStr),"
-               + "\(Int(x.rounded())),\(Int(y.rounded())),"
-               + "\(fmt3(Double(t.force))),\(fmt3(Double(t.majorRadius))),\(studyPhase)")
+               + xy + ","
+               + "\(fmt3(Double(t.force))),\(fmt3(Double(t.majorRadius))),\(studyPhase),"
+               + (keyboardUp ? "1" : "0"))
+
+        if keyboardUp {
+            // The assembler would put x0,y0,x1,y1 into _gestures.csv, which is the
+            // same disclosure by another route. Timing survives in the raw file.
+            if t.phase == .began { nTaps += 1; onTouchDown?(wall) }
+            if t.phase == .ended || t.phase == .cancelled { touchSlot[id] = nil }
+            return
+        }
 
         switch t.phase {
         case .began:
@@ -195,6 +232,14 @@ final class Recorder: ObservableObject {
 
     /// One row per thing the board did - a card flipped, discarded, carried away.
     func writeDeckRow(_ line: String) { append(deckFile, line) }
+
+    /// One row per thing a web scene did - loaded a page, refused to leave the
+    /// site, failed. Commas and newlines in a URL or an error message would split
+    /// the row, so the detail is quoted.
+    func writeWebRow(trial: Int, event: String, detail: String) {
+        let safe = detail.replacingOccurrences(of: "\"", with: "\"\"")
+        append(webFile, "\(Int(Date().timeIntervalSince1970 * 1000)),\(trial),\(event),\"\(safe)\"")
+    }
 
     func writeTrialRow(_ row: String) { append(trialsFile, row) }
 

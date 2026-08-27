@@ -228,7 +228,9 @@ struct ContentView: View {
 
     @ViewBuilder private var phaseContent: some View {
         if studyMode {
-            StudyView(runner: runner)
+            StudyView(runner: runner) { [weak runner] ev, detail in
+                recorder.writeWebRow(trial: runner?.index ?? -1, event: ev, detail: detail)
+            }
         } else {
             freePhaseContent
         }

@@ -126,6 +126,12 @@ struct Trial: Codable, Identifiable {
     /// the water bottle, resting. The board is shadowed and inert and the screen
     /// carries the prompt instead of a cue.
     var offscreen: Bool? = nil
+    /// A web scene hands the whole screen to a pinned page for its slot. The
+    /// participant uses a real site; touches still land in this app's window, so
+    /// they are still recorded, and the app stays foreground so the BLE beacon
+    /// keeps advertising - neither of which is true of a real third-party app.
+    var web: Bool? = nil
+    var url: String? = nil
     var prompt: String? = nil
     var travels: Bool? = nil
     var toRow: Int? = nil
@@ -170,6 +176,15 @@ struct Trial: Codable, Identifiable {
     }
     func block(default s: Play) -> Int { row * grid(default: s).cols + col }
     var isOffscreen: Bool { offscreen == true }
+    var isWeb: Bool { web == true && webURL != nil }
+    var webURL: URL? {
+        guard let u = url, !u.isEmpty, let parsed = URL(string: u),
+              parsed.scheme == "https" else { return nil }
+        return parsed
+    }
+    /// Neither kind of scene cues a gesture on the board, so both run their slot
+    /// out on the clock instead of ending on a response.
+    var isFreeform: Bool { isOffscreen || isWeb }
     var promptText: String {
         let p = (prompt ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         return p.isEmpty ? displayVerb : p

@@ -12,6 +12,9 @@ import SwiftUI
 
 struct StudyView: View {
     @ObservedObject var runner: TrialRunner
+    /// (event, detail) from a web scene - "load", "blocked", "fail" - so the
+    /// recorder can write a timeline of what was actually on screen.
+    var onWebEvent: ((String, String) -> Void)? = nil
 
     /// One deck per block. Reset whenever the scene changes, so the board a
     /// participant sees on trial 20 is identical to the one on trial 2 - otherwise
@@ -36,6 +39,18 @@ struct StudyView: View {
     private var cols: Int { grid.cols }
 
     var body: some View {
+        Group {
+            if let t = webScene {
+                webBody(t)
+            } else {
+                boardBody
+            }
+        }
+        .onChange(of: runner.index) { _, _ in decks = [:]; carry = nil }
+        .onChange(of: runner.phase) { _, p in if p == .idle { decks = [:] } }
+    }
+
+    private var boardBody: some View {
         VStack(spacing: 18) {
             header
             ZStack {
@@ -48,8 +63,36 @@ struct StudyView: View {
         }
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onChange(of: runner.index) { _, _ in decks = [:]; carry = nil }
-        .onChange(of: runner.phase) { _, p in if p == .idle { decks = [:] } }
+    }
+
+    /// A web scene takes the whole screen apart from a thin operator strip. The
+    /// participant should be using the site, not reading study chrome - but the
+    /// operator still needs to see which scene is running and how far in it is.
+    @ViewBuilder private func webBody(_ t: Trial) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 14) {
+                Text("Scene \(min(runner.index + 1, runner.total)) of \(runner.total)")
+                if !t.promptText.isEmpty {
+                    Text(t.promptText).lineLimit(1).truncationMode(.tail)
+                }
+                Spacer(minLength: 12)
+                ProgressView(value: Double(runner.nDone),
+                             total: Double(max(runner.total, 1)))
+                    .frame(width: 150)
+            }
+            .font(.footnote)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 7)
+            .background(.bar)
+
+            // Keyed on the scene index so a second web scene gets a fresh page
+            // rather than continuing wherever the participant left the first one.
+            WebScene(url: t.webURL!, onEvent: onWebEvent)
+                .id(t.i)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ignoresSafeArea(edges: .bottom)
     }
 
     // MARK: Header
@@ -203,8 +246,15 @@ struct StudyView: View {
         // An off-screen scene still carries a row and column from the generator,
         // but lighting a deck would contradict the prompt telling the participant
         // to leave the tablet alone.
-        if t.isOffscreen { return false }
+        if t.isFreeform { return false }
         return t.row == r && t.col == c
+    }
+
+    private var webScene: Trial? {
+        guard let t = runner.current, t.isWeb,
+              runner.phase == .ready || runner.phase == .cued
+                || runner.phase == .settling else { return nil }
+        return t
     }
 
     private var offscreenScene: Trial? {
