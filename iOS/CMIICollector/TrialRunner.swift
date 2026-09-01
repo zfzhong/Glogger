@@ -56,11 +56,44 @@ final class TrialRunner: ObservableObject {
 
     // MARK: - Control
 
-    func start(_ s: Play) {
+    /// `joinedLateMs` lets a tablet enter a timeline that has already begun.
+    ///
+    /// The scheduled start of the experiment is the session's zero, not the
+    /// moment someone pressed the button. Two tablets are pressed seconds apart
+    /// by one pair of hands, and every scene owns a fixed slot - anchoring to the
+    /// press instead of the schedule would leave them out of step by the gap
+    /// between two thumbs, for the whole session.
+    ///
+    /// Scenes whose slot has already elapsed are skipped and recorded as
+    /// "not_run", so the file still accounts for every scene in the play.
+    func start(_ s: Play, joinedLateMs: Int = 0) {
         play = s
         index = 0; nDone = 0; nMatched = 0
         lastOutcome = ""; lastMatched = nil
+        skipped = 0
+        if joinedLateMs > 0 {
+            var cursor = 0
+            for (i, t) in s.trials.enumerated() {
+                let slot = t.slotMs ?? (s.readyMs + (t.durationMs ?? s.cueTimeoutMs) + s.settleMs)
+                let begins = t.startMs ?? cursor
+                cursor = begins + slot
+                if cursor > joinedLateMs { index = i; break }
+                index = i + 1
+                skipped = i + 1
+                onRow?(Self.notRunRow(t))
+            }
+        }
+        guard index < s.trials.count else { phase = .done; return }
         beginReady()
+    }
+
+    /// How many scenes were already over when this tablet joined.
+    @Published private(set) var skipped = 0
+
+    /// A scene the tablet was not running for. Same shape as a played row so the
+    /// file has one row per scene either way.
+    private static func notRunRow(_ t: Trial) -> String {
+        "\(t.i),,\(t.row),\(t.col),\(t.type),\(t.dir ?? ""),\(t.picture),,,not_run,,,\(t.tag ?? "normal"),\(t.durationMs ?? 0),\(t.rows ?? 0),\(t.cols ?? 0)"
     }
 
     func abort() {

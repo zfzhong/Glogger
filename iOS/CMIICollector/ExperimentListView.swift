@@ -17,9 +17,9 @@ struct ExperimentListView: View {
     @ObservedObject var config: Config
     @ObservedObject var server: ServerClient
     @ObservedObject var recorder: Recorder
-    /// Hands back the chosen experiment, the play, and the instant to begin at
-    /// (nil = now). The caller arms and waits; this screen only decides.
-    var onStart: (ExperimentInfo, Play, Date?) -> Void
+    /// Hands back the chosen experiment, the play, and how far into the play's
+    /// timeline this tablet is joining. Zero when it is starting at the top.
+    var onStart: (ExperimentInfo, Play, Int) -> Void
 
     @State private var loadingId: Int?
     /// Ticks so the countdown under each Start button stays honest without the
@@ -172,31 +172,33 @@ struct ExperimentListView: View {
             } else {
                 VStack(alignment: .trailing, spacing: 5) {
                     Button { Task { await start(e) } } label: {
-                        Label(e.startDate == nil ? "Start" : "Arm",
-                              systemImage: e.startDate == nil ? "play.fill" : "clock.fill")
-                            .frame(minWidth: 74)
+                        Label("Start", systemImage: "play.fill").frame(minWidth: 74)
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(!runnable || loadingId != nil || expired(e))
-                    // A late participant should not need a trip to the web page.
-                    // Long-press runs it now, single-tablet, and says so.
-                    .onLongPressGesture(minimumDuration: 0.7) {
-                        guard runnable, expired(e) else { return }
+                    .disabled(!canStart(e) || loadingId != nil)
+                    // A test run should not need a trip to the web page to give an
+                    // experiment a start time. Holding runs it from the top, now,
+                    // on this tablet alone.
+                    .onLongPressGesture(minimumDuration: 0.8) {
+                        guard runnable, !canStart(e) else { return }
                         Task { await start(e, ignoringSchedule: true) }
                     }
 
-                    if let d = e.startDate {
-                        VStack(alignment: .trailing, spacing: 1) {
+                    VStack(alignment: .trailing, spacing: 1) {
+                        if let d = e.startDate {
                             Text(Self.clockText.string(from: d))
                                 .font(.system(.caption, design: .monospaced))
                             Text(countdown(to: d))
                                 .font(.caption2)
-                                .foregroundStyle(expired(e) ? AnyShapeStyle(.orange)
-                                                            : AnyShapeStyle(.secondary))
-                            if expired(e) && runnable {
-                                Text("hold to run anyway")
-                                    .font(.caption2).foregroundStyle(.tertiary)
-                            }
+                                .foregroundStyle(canStart(e) ? AnyShapeStyle(.green)
+                                                             : AnyShapeStyle(.secondary))
+                        } else {
+                            Text("no start time set")
+                                .font(.caption2).foregroundStyle(.orange)
+                        }
+                        if runnable && !canStart(e) {
+                            Text("hold to run now")
+                                .font(.caption2).foregroundStyle(.tertiary)
                         }
                     }
                 }
@@ -220,9 +222,10 @@ struct ExperimentListView: View {
         let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f
     }()
 
-    /// Judged on server time, never the tablet's own - see ServerClient.syncClock.
-    private func expired(_ e: ExperimentInfo) -> Bool {
-        guard let d = e.startDate else { return false }
+    /// The scheduled instant IS the session's zero, so a run can only be joined
+    /// once it has arrived. Judged on server time, never the tablet's own.
+    private func canStart(_ e: ExperimentInfo) -> Bool {
+        guard e.hasPlay, let d = e.startDate else { return false }
         return server.serverNow() >= d
     }
 
@@ -230,13 +233,13 @@ struct ExperimentListView: View {
         let secs = Int(d.timeIntervalSince(server.serverNow()).rounded())
         if secs <= 0 {
             let ago = -secs
-            if ago < 90 { return "started \(ago)s ago" }
-            if ago < 5400 { return "started \(ago / 60) min ago" }
-            return "started \(ago / 3600) h ago"
+            if ago < 90 { return ago < 2 ? "now" : "running \(ago)s" }
+            if ago < 5400 { return "running \(ago / 60) min" }
+            return "began \(ago / 3600) h ago"
         }
-        if secs < 90 { return "in \(secs)s" }
-        if secs < 5400 { return "in \(secs / 60) min" }
-        return "in \(secs / 3600) h"
+        if secs < 90 { return "starts in \(secs)s" }
+        if secs < 5400 { return "starts in \(secs / 60) min" }
+        return "starts in \(secs / 3600) h"
     }
 
     private func start(_ e: ExperimentInfo, ignoringSchedule: Bool = false) async {
@@ -252,7 +255,13 @@ struct ExperimentListView: View {
         // even if the operator never opens Configure.
         config.experimentId = e.id
         config.experimentName = e.name
-        let target = ignoringSchedule ? nil : e.startDate
-        onStart(e, play, (target.map { $0 > server.serverNow() } == true) ? target : nil)
+        // How far into the play's own timeline this tablet is arriving. The other
+        // tablet computes the same number from the same instant, so both land on
+        // the same scene however far apart the two button presses were.
+        var joinedLateMs = 0
+        if !ignoringSchedule, let d = e.startDate {
+            joinedLateMs = max(0, Int(server.serverNow().timeIntervalSince(d) * 1000))
+        }
+        onStart(e, play, joinedLateMs)
     }
 }

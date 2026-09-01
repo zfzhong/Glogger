@@ -154,6 +154,11 @@ struct Trial: Codable, Identifiable {
     var toRow: Int? = nil
     var toCol: Int? = nil
     var toPicture: String? = nil
+    /// Fixed-slot timing from the server: where this scene sits on the play's own
+    /// timeline, and how long its slot is. Present from playVersion 3.
+    var startMs: Int? = nil
+    var slotMs: Int? = nil
+    var gapMs: Int? = nil
     var id: Int { i }
 
     private var builtIn: GType? { GType(rawValue: type) }
