@@ -67,6 +67,20 @@ final class Recorder: ObservableObject {
 
     init() { watchKeyboard() }
 
+    /// `name`, or `name_2`, `name_3`... - the first that is not already holding
+    /// a recorded session.
+    static func freeName(_ name: String, under docs: URL) -> String {
+        let fm = FileManager.default
+        func taken(_ n: String) -> Bool {
+            let d = docs.appendingPathComponent("sessions/\(n)", isDirectory: true)
+            let items = (try? fm.contentsOfDirectory(atPath: d.path)) ?? []
+            return !items.isEmpty
+        }
+        if !taken(name) { return name }
+        for i in 2...99 where !taken("\(name)_\(i)") { return "\(name)_\(i)" }
+        return "\(name)_\(Int(Date().timeIntervalSince1970))"
+    }
+
     static func defaultName() -> String {
         let f = DateFormatter(); f.dateFormat = "MMdd_HHmm"
         return f.string(from: Date())
@@ -77,6 +91,11 @@ final class Recorder: ObservableObject {
     func start() {
         guard !isRecording else { return }
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        // The default name is the launch minute, so a second run in the same
+        // launch reused the same folder - and openFile truncates, so run 1 was
+        // destroyed the instant run 2 started. It only survived once because it
+        // had already been uploaded. Never reuse a folder that has files in it.
+        sessionName = Recorder.freeName(sessionName, under: docs)
         let dir = docs.appendingPathComponent("sessions/\(sessionName)", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         sessionDir = dir
