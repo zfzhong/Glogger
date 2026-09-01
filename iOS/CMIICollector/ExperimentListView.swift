@@ -95,11 +95,6 @@ struct ExperimentListView: View {
                     Label(failure, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption).foregroundStyle(.orange)
                 }
-                if !config.missingMetadata.isEmpty {
-                    Label("not set: " + config.missingMetadata.joined(separator: ", "),
-                          systemImage: "person.crop.circle.badge.questionmark")
-                        .font(.caption).foregroundStyle(.orange)
-                }
                 Spacer()
             }
         }
@@ -159,6 +154,12 @@ struct ExperimentListView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
+                if let missing = e.missing, !missing.isEmpty {
+                    Label("not described on the server: " + missing.joined(separator: ", "),
+                          systemImage: "person.crop.circle.badge.questionmark")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+
                 if e.sessions > 0 {
                     Text("\(e.sessions) session\(e.sessions == 1 ? "" : "s") already collected")
                         .font(.caption2).foregroundStyle(.tertiary)
@@ -176,13 +177,6 @@ struct ExperimentListView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(!canStart(e) || loadingId != nil)
-                    // A test run should not need a trip to the web page to give an
-                    // experiment a start time. Holding runs it from the top, now,
-                    // on this tablet alone.
-                    .onLongPressGesture(minimumDuration: 0.8) {
-                        guard runnable, !canStart(e) else { return }
-                        Task { await start(e, ignoringSchedule: true) }
-                    }
 
                     VStack(alignment: .trailing, spacing: 1) {
                         if let d = e.startDate {
@@ -192,13 +186,13 @@ struct ExperimentListView: View {
                                 .font(.caption2)
                                 .foregroundStyle(canStart(e) ? AnyShapeStyle(.green)
                                                              : AnyShapeStyle(.secondary))
-                        } else {
-                            Text("no start time set")
+                        } else if e.tabletsValue > 1 {
+                            Text("two tablets — needs a start time")
                                 .font(.caption2).foregroundStyle(.orange)
-                        }
-                        if runnable && !canStart(e) {
-                            Text("hold to run now")
-                                .font(.caption2).foregroundStyle(.tertiary)
+                                .multilineTextAlignment(.trailing)
+                        } else {
+                            Text("starts when you tap")
+                                .font(.caption2).foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -222,10 +216,15 @@ struct ExperimentListView: View {
         let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f
     }()
 
-    /// The scheduled instant IS the session's zero, so a run can only be joined
-    /// once it has arrived. Judged on server time, never the tablet's own.
+    /// A two-tablet play REQUIRES a scheduled instant: it is the session's zero,
+    /// and the only thing keeping the pair in step. A one-tablet play has nothing
+    /// to stay in step with, so a start time is optional there - and when it has
+    /// one, it is still honoured.
+    ///
+    /// Judged on server time, never the tablet's own.
     private func canStart(_ e: ExperimentInfo) -> Bool {
-        guard e.hasPlay, let d = e.startDate else { return false }
+        guard e.hasPlay else { return false }
+        guard let d = e.startDate else { return e.tabletsValue == 1 }
         return server.serverNow() >= d
     }
 
@@ -242,7 +241,7 @@ struct ExperimentListView: View {
         return "starts in \(secs / 3600) h"
     }
 
-    private func start(_ e: ExperimentInfo, ignoringSchedule: Bool = false) async {
+    private func start(_ e: ExperimentInfo) async {
         failure = ""
         loadingId = e.id
         defer { loadingId = nil }
@@ -255,11 +254,12 @@ struct ExperimentListView: View {
         // even if the operator never opens Configure.
         config.experimentId = e.id
         config.experimentName = e.name
+        config.adopt(e)
         // How far into the play's own timeline this tablet is arriving. The other
         // tablet computes the same number from the same instant, so both land on
         // the same scene however far apart the two button presses were.
         var joinedLateMs = 0
-        if !ignoringSchedule, let d = e.startDate {
+        if let d = e.startDate {
             joinedLateMs = max(0, Int(server.serverNow().timeIntervalSince(d) * 1000))
         }
         onStart(e, play, joinedLateMs)

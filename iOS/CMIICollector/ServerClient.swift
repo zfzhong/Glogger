@@ -24,6 +24,14 @@ struct ExperimentInfo: Codable, Identifiable, Hashable {
     var tablets: Int? = nil
     var notes: String? = nil
     var startISO: String? = nil
+    // The sitting, described once by the administrator. The tablet writes these
+    // into session.json rather than asking for them to be typed twice.
+    var participant: String? = nil
+    var watchWrist: String? = nil
+    var interactingHand: String? = nil
+    var posture: String? = nil
+    var tabletOrientation: String? = nil
+    var missing: [String]? = nil
 
     var hasPlay: Bool { (playId ?? 0) > 0 && trialCount > 0 }
     var totalMsValue: Int { totalMs ?? 0 }

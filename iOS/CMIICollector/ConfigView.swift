@@ -14,10 +14,6 @@ struct ConfigView: View {
     @ObservedObject var recorder: Recorder
     @Environment(\.dismiss) private var dismiss
 
-    private let wrists = ["", "left", "right"]
-    private let hands = ["", "left", "right"]
-    private let postures = ["", "seated at table", "standing", "sofa", "in bed"]
-    private let orientations = ["", "flat on table", "propped", "handheld"]
 
     var body: some View {
         NavigationStack {
@@ -54,25 +50,22 @@ struct ConfigView: View {
                 }
 
                 Section("Session") {
-                    TextField("participant", text: $config.participant)
+                    // Participant, wrist, hand, posture and orientation describe the
+                    // sitting, not this device, and are set on the experiment so both
+                    // tablets cannot disagree. Shown read-only for confirmation.
                     TextField("study", text: $config.studyName)
-                    Picker("Watch wrist", selection: $config.watchWrist) {
-                        ForEach(wrists, id: \.self) { Text($0.isEmpty ? "—" : $0).tag($0) }
-                    }
-                    Picker("Interacting hand", selection: $config.interactingHand) {
-                        ForEach(hands, id: \.self) { Text($0.isEmpty ? "—" : $0).tag($0) }
-                    }
-                    Picker("Posture", selection: $config.posture) {
-                        ForEach(postures, id: \.self) { Text($0.isEmpty ? "—" : $0).tag($0) }
-                    }
-                    Picker("Tablet orientation", selection: $config.tabletOrientation) {
-                        ForEach(orientations, id: \.self) { Text($0.isEmpty ? "—" : $0).tag($0) }
-                    }
-                    if !config.missingMetadata.isEmpty {
-                        Label("Still blank: \(config.missingMetadata.joined(separator: ", "))",
-                              systemImage: "exclamationmark.triangle")
-                            .font(.caption).foregroundStyle(.orange)
-                    }
+                    LabeledContent("Participant",
+                                   value: config.participant.isEmpty ? "—" : config.participant)
+                    LabeledContent("Watch wrist",
+                                   value: config.watchWrist.isEmpty ? "—" : config.watchWrist)
+                    LabeledContent("Interacting hand",
+                                   value: config.interactingHand.isEmpty ? "—" : config.interactingHand)
+                    LabeledContent("Posture",
+                                   value: config.posture.isEmpty ? "—" : config.posture)
+                    LabeledContent("Tablet orientation",
+                                   value: config.tabletOrientation.isEmpty ? "—" : config.tabletOrientation)
+                    Text("Set on the experiment, on the server. This tablet adopts them when a run starts.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
 
             }

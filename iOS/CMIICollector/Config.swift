@@ -103,6 +103,17 @@ final class Config: ObservableObject {
         return out
     }
 
+    /// Take the sitting's description from the experiment the operator chose.
+    /// The server is the single source of truth for these; two tablets typing
+    /// them separately is how they came to disagree.
+    func adopt(_ e: ExperimentInfo) {
+        participant = e.participant ?? ""
+        watchWrist = e.watchWrist ?? ""
+        interactingHand = e.interactingHand ?? ""
+        posture = e.posture ?? ""
+        tabletOrientation = e.tabletOrientation ?? ""
+    }
+
     /// Freeze the current settings for one run.
     func snapshot(clockOffsetMs: Int = 0, clockKnown: Bool = false) -> SessionMeta {
         SessionMeta(experimentId: experimentId, experimentName: experimentName,
