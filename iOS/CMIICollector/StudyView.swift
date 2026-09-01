@@ -24,6 +24,8 @@ struct StudyView: View {
     /// above every block and the drop target resolved from where it was released.
     @State private var frames: [Int: CGRect] = [:]
     @State private var carry: (block: Int, offset: CGSize)?
+    /// Which page a menu-style web scene is currently showing. Nil = the menu.
+    @State private var picked: WebSite?
 
     /// Grid shape comes from the SCENE, falling back to the play default.
     ///
@@ -46,7 +48,7 @@ struct StudyView: View {
                 boardBody
             }
         }
-        .onChange(of: runner.index) { _, _ in decks = [:]; carry = nil }
+        .onChange(of: runner.index) { _, _ in decks = [:]; carry = nil; picked = nil }
         .onChange(of: runner.phase) { _, p in if p == .idle { decks = [:] } }
     }
 
@@ -69,10 +71,24 @@ struct StudyView: View {
     /// participant should be using the site, not reading study chrome - but the
     /// operator still needs to see which scene is running and how far in it is.
     @ViewBuilder private func webBody(_ t: Trial) -> some View {
+        // A single-page scene goes straight to the page; a menu scene starts on
+        // the menu and comes back to it whenever the participant asks.
+        let live: URL? = picked?.link ?? (t.siteList.isEmpty ? t.webURL : nil)
         VStack(spacing: 0) {
             HStack(spacing: 14) {
+                if !t.siteList.isEmpty, picked != nil {
+                    Button {
+                        picked = nil
+                        onWebEvent?("menu", "")
+                    } label: {
+                        Label("Games", systemImage: "square.grid.2x2")
+                    }
+                    .font(.footnote)
+                }
                 Text("Scene \(min(runner.index + 1, runner.total)) of \(runner.total)")
-                if !t.promptText.isEmpty {
+                if let p = picked {
+                    Text(p.label).lineLimit(1)
+                } else if !t.promptText.isEmpty {
                     Text(t.promptText).lineLimit(1).truncationMode(.tail)
                 }
                 Spacer(minLength: 12)
@@ -86,13 +102,52 @@ struct StudyView: View {
             .padding(.vertical, 7)
             .background(.bar)
 
-            // Keyed on the scene index so a second web scene gets a fresh page
-            // rather than continuing wherever the participant left the first one.
-            WebScene(url: t.webURL!, onEvent: onWebEvent)
-                .id(t.i)
+            if let url = live {
+                // Keyed on the page so switching games reloads rather than
+                // continuing where the previous one left off.
+                WebScene(url: url, onEvent: onWebEvent)
+                    .id("\(t.i)-\(url.absoluteString)")
+            } else {
+                siteMenu(t)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea(edges: .bottom)
+    }
+
+    /// The approved list, as big plain tiles. Deliberately dull: this screen is
+    /// not the task, and anything decorative here would be gesture noise sitting
+    /// in the middle of a free-play recording.
+    @ViewBuilder private func siteMenu(_ t: Trial) -> some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                if !t.promptText.isEmpty {
+                    Text(t.promptText)
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.top, 26)
+                }
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 18)],
+                          spacing: 18) {
+                    ForEach(t.siteList) { site in
+                        Button {
+                            picked = site
+                            onWebEvent?("pick", site.url)
+                        } label: {
+                            Text(site.label)
+                                .font(.title3.weight(.medium))
+                                .frame(maxWidth: .infinity, minHeight: 96)
+                                .background(RoundedRectangle(cornerRadius: 14)
+                                                .fill(.quaternary))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 26)
+                .padding(.bottom, 26)
+            }
+        }
     }
 
     // MARK: Header

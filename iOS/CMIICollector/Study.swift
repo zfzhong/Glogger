@@ -97,6 +97,19 @@ enum GType: String, Codable, CaseIterable {
 /// rows/cols/durationMs are optional so a play generated before scenes
 /// existed - including one sitting in the on-disk cache - still decodes; the
 /// play-level values fill in.
+/// One entry in a web scene's menu.
+struct WebSite: Codable, Hashable, Identifiable {
+    var label: String
+    var url: String
+    var id: String { url }
+    /// Nil for anything that is not plain https - the tile is dropped rather than
+    /// offering the participant a page that will not load.
+    var link: URL? {
+        guard let u = URL(string: url), u.scheme == "https" else { return nil }
+        return u
+    }
+}
+
 struct Trial: Codable, Identifiable {
     var i: Int
     /// Gesture slug from the book, e.g. "tap" or something added later.
@@ -132,6 +145,10 @@ struct Trial: Codable, Identifiable {
     /// keeps advertising - neither of which is true of a real third-party app.
     var web: Bool? = nil
     var url: String? = nil
+    /// A web scene may offer a menu instead of a single page. Free choice is part
+    /// of what makes the session naturalistic; a bounded list keeps participants
+    /// comparable and keeps uncurated content off the screen.
+    var sites: [WebSite]? = nil
     var prompt: String? = nil
     var travels: Bool? = nil
     var toRow: Int? = nil
@@ -176,7 +193,8 @@ struct Trial: Codable, Identifiable {
     }
     func block(default s: Play) -> Int { row * grid(default: s).cols + col }
     var isOffscreen: Bool { offscreen == true }
-    var isWeb: Bool { web == true && webURL != nil }
+    var isWeb: Bool { web == true && (webURL != nil || !siteList.isEmpty) }
+    var siteList: [WebSite] { (sites ?? []).filter { $0.link != nil } }
     var webURL: URL? {
         guard let u = url, !u.isEmpty, let parsed = URL(string: u),
               parsed.scheme == "https" else { return nil }

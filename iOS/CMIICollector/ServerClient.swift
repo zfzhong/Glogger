@@ -17,8 +17,26 @@ struct ExperimentInfo: Codable, Identifiable, Hashable {
     var playId: Int?
     var playName: String?
     var trialCount: Int
+    var totalMs: Int? = nil
+    var tablets: Int? = nil
+    var notes: String? = nil
 
     var hasPlay: Bool { (playId ?? 0) > 0 && trialCount > 0 }
+    var totalMsValue: Int { totalMs ?? 0 }
+    var tabletsValue: Int { tablets ?? 1 }
+
+    /// Why Start is unavailable, in the operator's terms rather than the schema's.
+    var blockedReason: String {
+        if (playId ?? 0) == 0 { return "no play assigned" }
+        if trialCount == 0 { return "its play has no scenes" }
+        return ""
+    }
+
+    var durationText: String {
+        let s = totalMsValue / 1000
+        return s >= 60 ? "\(s / 60) min \(s % 60 == 0 ? "" : "\(s % 60) s")"
+                       : "\(s) s"
+    }
     var label: String {
         hasPlay ? "\(name) — \(playName ?? "?") (\(trialCount))"
                     : "\(name) — no play"
@@ -54,9 +72,18 @@ final class ServerClient: ObservableObject {
                 status = "server returned an error"; return
             }
             experiments = try JSONDecoder().decode(ExperimentList.self, from: data).experiments
-            status = "\(experiments.count) experiment\(experiments.count == 1 ? "" : "s")"
+            try? data.write(to: listCacheURL())
+            status = "\(experiments.count) experiment\(experiments.count == 1 ? "" : "s") · just now"
         } catch {
-            status = "could not reach the server"
+            // A dead network must not leave the operator staring at an empty
+            // screen when the plays they need are already on this tablet.
+            if experiments.isEmpty, let d = try? Data(contentsOf: listCacheURL()),
+               let cached = try? JSONDecoder().decode(ExperimentList.self, from: d) {
+                experiments = cached.experiments
+                status = "offline — showing the last list this tablet saw"
+            } else {
+                status = "could not reach the server"
+            }
         }
     }
 
@@ -87,6 +114,13 @@ final class ServerClient: ObservableObject {
     }
 
     // MARK: cache
+
+    private func listCacheURL() -> URL {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory,
+                                           in: .userDomainMask)[0]
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("experiments.json")
+    }
 
     private func cacheURL(_ experimentId: Int) -> URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory,

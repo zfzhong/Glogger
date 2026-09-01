@@ -16,6 +16,10 @@ final class Uploader: ObservableObject {
     @Published private(set) var busy = false
     @Published private(set) var progress = ""          // shown in the control bar
 
+    /// Cleared when a new session starts, so the summary never shows the previous
+    /// participant's upload result next to this participant's counts.
+    func clearProgress() { progress = "" }
+
     /// Uploads every file in `dir`. `meta` is attached to the first request so the
     /// server can record participant / study / device without a second endpoint.
     func upload(dir: URL, session: String, base: String,

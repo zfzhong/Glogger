@@ -25,6 +25,7 @@ struct SessionMeta: Sendable {
     var interactingHand = ""
     var posture = ""
     var tabletOrientation = ""
+    var tabletRole = "A"
     var missing: [String] = []
 
     var hasExperiment: Bool { experimentId > 0 }
@@ -55,6 +56,10 @@ final class Config: ObservableObject {
     // MARK: BLE
     @Published var advertiseName: String { didSet { put("advertiseName", advertiseName) } }
 
+    /// Which tablet this is in a two-tablet play. Both download the same play and
+    /// follow the same timeline; the role decides whose scenes are whose.
+    @Published var tabletRole: String { didSet { put("tabletRole", tabletRole) } }
+
     // MARK: Session metadata - required before analysis (spec §7)
     @Published var participant: String { didSet { put("participant", participant) } }
     @Published var studyName: String { didSet { put("studyName", studyName) } }
@@ -74,6 +79,7 @@ final class Config: ObservableObject {
         experimentId      = d.integer(forKey: "experimentId")          // 0 = none chosen
         experimentName    = d.string(forKey: "experimentName") ?? ""
         advertiseName     = d.string(forKey: "advertiseName") ?? "CMII-Pad"
+        tabletRole        = d.string(forKey: "tabletRole") ?? "A"
         participant       = d.string(forKey: "participant") ?? ""
         studyName         = d.string(forKey: "studyName") ?? "elicitation"
         watchWrist        = d.string(forKey: "watchWrist") ?? ""
@@ -104,6 +110,7 @@ final class Config: ObservableObject {
                     advertiseName: advertiseName, participant: participant,
                     studyName: studyName, watchWrist: watchWrist,
                     interactingHand: interactingHand, posture: posture,
-                    tabletOrientation: tabletOrientation, missing: missingMetadata)
+                    tabletOrientation: tabletOrientation, tabletRole: tabletRole,
+                    missing: missingMetadata)
     }
 }
