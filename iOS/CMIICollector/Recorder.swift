@@ -291,7 +291,9 @@ final class Recorder: ObservableObject {
             "interacting_hand": info.interactingHand,
             "posture": info.posture,
             "tablet_orientation": info.tabletOrientation,
-            "tablet_role": info.tabletRole
+            "tablet_role": info.tabletRole,
+            "server_clock_offset_ms": info.serverClockOffsetMs,
+            "server_clock_measured": info.serverClockMeasured
         ]
         if info.hasExperiment {
             meta["experiment_id"] = info.experimentId

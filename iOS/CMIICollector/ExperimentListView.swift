@@ -17,10 +17,15 @@ struct ExperimentListView: View {
     @ObservedObject var config: Config
     @ObservedObject var server: ServerClient
     @ObservedObject var recorder: Recorder
-    /// Hands back the chosen experiment and the play to run.
-    var onStart: (ExperimentInfo, Play) -> Void
+    /// Hands back the chosen experiment, the play, and the instant to begin at
+    /// (nil = now). The caller arms and waits; this screen only decides.
+    var onStart: (ExperimentInfo, Play, Date?) -> Void
 
     @State private var loadingId: Int?
+    /// Ticks so the countdown under each Start button stays honest without the
+    /// operator having to pull to refresh.
+    @State private var tick = Date()
+    private let clock = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     @State private var failure = ""
     @State private var showConfig = false
 
@@ -35,9 +40,9 @@ struct ExperimentListView: View {
             }
         }
         .task { await refresh() }
+        .onReceive(clock) { tick = $0 }
         .sheet(isPresented: $showConfig) {
-            ConfigView(config: config, server: server, recorder: recorder,
-                       loadedPlay: .constant(nil), playStatus: .constant(""))
+            ConfigView(config: config, server: server, recorder: recorder)
                 .onDisappear { recorder.advertiseName = config.advertiseName }
         }
     }
@@ -81,6 +86,11 @@ struct ExperimentListView: View {
 
             HStack(spacing: 14) {
                 Text(server.status).font(.caption).foregroundStyle(.secondary)
+                if server.clockKnown, abs(server.clockOffsetMs) >= 1000 {
+                    Label("tablet clock off by \(server.clockOffsetMs / 1000)s — using server time",
+                          systemImage: "clock.badge.exclamationmark")
+                        .font(.caption).foregroundStyle(.orange)
+                }
                 if !failure.isEmpty {
                     Label(failure, systemImage: "exclamationmark.triangle.fill")
                         .font(.caption).foregroundStyle(.orange)
@@ -123,7 +133,7 @@ struct ExperimentListView: View {
     }
 
     @ViewBuilder private func row(_ e: ExperimentInfo) -> some View {
-        let runnable = e.hasPlay || server.cached(e.id) != nil
+        let runnable = e.hasPlay
         HStack(alignment: .top, spacing: 16) {
             VStack(alignment: .leading, spacing: 5) {
                 Text(e.name)
@@ -141,10 +151,6 @@ struct ExperimentListView: View {
                         Text("\(e.trialCount) scenes")
                         if e.totalMsValue > 0 { Text(e.durationText) }
                         if e.tabletsValue > 1 { Text("2 tablets") }
-                    } else if server.cached(e.id) != nil {
-                        Label("no play on the server — a cached copy is on this tablet",
-                              systemImage: "internaldrive")
-                            .foregroundStyle(.orange)
                     } else {
                         Label(e.blockedReason, systemImage: "exclamationmark.circle")
                             .foregroundStyle(.orange)
@@ -164,11 +170,36 @@ struct ExperimentListView: View {
             if loadingId == e.id {
                 ProgressView().controlSize(.small).padding(.trailing, 6)
             } else {
-                Button { Task { await start(e) } } label: {
-                    Label("Start", systemImage: "play.fill").frame(minWidth: 74)
+                VStack(alignment: .trailing, spacing: 5) {
+                    Button { Task { await start(e) } } label: {
+                        Label(e.startDate == nil ? "Start" : "Arm",
+                              systemImage: e.startDate == nil ? "play.fill" : "clock.fill")
+                            .frame(minWidth: 74)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!runnable || loadingId != nil || expired(e))
+                    // A late participant should not need a trip to the web page.
+                    // Long-press runs it now, single-tablet, and says so.
+                    .onLongPressGesture(minimumDuration: 0.7) {
+                        guard runnable, expired(e) else { return }
+                        Task { await start(e, ignoringSchedule: true) }
+                    }
+
+                    if let d = e.startDate {
+                        VStack(alignment: .trailing, spacing: 1) {
+                            Text(Self.clockText.string(from: d))
+                                .font(.system(.caption, design: .monospaced))
+                            Text(countdown(to: d))
+                                .font(.caption2)
+                                .foregroundStyle(expired(e) ? AnyShapeStyle(.orange)
+                                                            : AnyShapeStyle(.secondary))
+                            if expired(e) && runnable {
+                                Text("hold to run anyway")
+                                    .font(.caption2).foregroundStyle(.tertiary)
+                            }
+                        }
+                    }
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(!runnable || loadingId != nil)
             }
         }
         .padding(16)
@@ -185,16 +216,43 @@ struct ExperimentListView: View {
         await server.loadExperiments(base: config.serverBase)
     }
 
-    private func start(_ e: ExperimentInfo) async {
+    private static let clockText: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "HH:mm:ss"; return f
+    }()
+
+    /// Judged on server time, never the tablet's own - see ServerClient.syncClock.
+    private func expired(_ e: ExperimentInfo) -> Bool {
+        guard let d = e.startDate else { return false }
+        return server.serverNow() >= d
+    }
+
+    private func countdown(to d: Date) -> String {
+        let secs = Int(d.timeIntervalSince(server.serverNow()).rounded())
+        if secs <= 0 {
+            let ago = -secs
+            if ago < 90 { return "started \(ago)s ago" }
+            if ago < 5400 { return "started \(ago / 60) min ago" }
+            return "started \(ago / 3600) h ago"
+        }
+        if secs < 90 { return "in \(secs)s" }
+        if secs < 5400 { return "in \(secs / 60) min" }
+        return "in \(secs / 3600) h"
+    }
+
+    private func start(_ e: ExperimentInfo, ignoringSchedule: Bool = false) async {
         failure = ""
         loadingId = e.id
         defer { loadingId = nil }
+        // Re-measure right before arming: the offset is what the countdown and
+        // the two tablets' agreement both rest on.
+        await server.syncClock(base: config.serverBase)
         let (play, msg) = await server.fetchPlay(base: config.serverBase, experimentId: e.id)
         guard let play else { failure = msg; return }
         // Remember the choice so uploads and session.json agree with what ran,
         // even if the operator never opens Configure.
         config.experimentId = e.id
         config.experimentName = e.name
-        onStart(e, play)
+        let target = ignoringSchedule ? nil : e.startDate
+        onStart(e, play, (target.map { $0 > server.serverNow() } == true) ? target : nil)
     }
 }

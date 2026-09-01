@@ -26,6 +26,11 @@ struct SessionMeta: Sendable {
     var posture = ""
     var tabletOrientation = ""
     var tabletRole = "A"
+    /// serverNow - deviceNow at the moment the run began. Analysis needs it to
+    /// put tablet rows and watch rows on one timeline, and it moves in steps of
+    /// seconds, so it is measured per session rather than assumed.
+    var serverClockOffsetMs = 0
+    var serverClockMeasured = false
     var missing: [String] = []
 
     var hasExperiment: Bool { experimentId > 0 }
@@ -68,10 +73,6 @@ final class Config: ObservableObject {
     @Published var posture: String { didSet { put("posture", posture) } }
     @Published var tabletOrientation: String { didSet { put("tabletOrientation", tabletOrientation) } }
 
-    // MARK: Offline fallback - used only when no server play is available
-    @Published var fallbackPreset: String { didSet { put("fallbackPreset", fallbackPreset) } }
-    @Published var fallbackSeed: String { didSet { put("fallbackSeed", fallbackSeed) } }
-
     init() {
         let d = UserDefaults.standard
         serverBase        = d.string(forKey: "serverBase") ?? "https://withings.geosketch.art"
@@ -86,8 +87,6 @@ final class Config: ObservableObject {
         interactingHand   = d.string(forKey: "interactingHand") ?? ""
         posture           = d.string(forKey: "posture") ?? ""
         tabletOrientation = d.string(forKey: "tabletOrientation") ?? ""
-        fallbackPreset    = d.string(forKey: "fallbackPreset") ?? "demo"
-        fallbackSeed      = d.string(forKey: "fallbackSeed") ?? "20260826"
     }
 
     var hasExperiment: Bool { experimentId > 0 }
@@ -105,12 +104,13 @@ final class Config: ObservableObject {
     }
 
     /// Freeze the current settings for one run.
-    func snapshot() -> SessionMeta {
+    func snapshot(clockOffsetMs: Int = 0, clockKnown: Bool = false) -> SessionMeta {
         SessionMeta(experimentId: experimentId, experimentName: experimentName,
                     advertiseName: advertiseName, participant: participant,
                     studyName: studyName, watchWrist: watchWrist,
                     interactingHand: interactingHand, posture: posture,
                     tabletOrientation: tabletOrientation, tabletRole: tabletRole,
+                    serverClockOffsetMs: clockOffsetMs, serverClockMeasured: clockKnown,
                     missing: missingMetadata)
     }
 }

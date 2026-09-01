@@ -21,17 +21,29 @@ struct ContentView: View {
     @StateObject private var config = Config()
     @StateObject private var server = ServerClient()
 
-    private enum Screen { case list, running, summary }
+    private enum Screen { case list, armed, running, summary }
     @State private var screen: Screen = .list
     @State private var scenesTotal = 0
+    /// Held between arming and the scheduled instant.
+    @State private var pending: Play?
+    @State private var startAt: Date?
+    @State private var tick = Date()
+    private let clock = Timer.publish(every: 0.2, on: .main, in: .common).autoconnect()
 
     var body: some View {
         Group {
             switch screen {
             case .list:
-                ExperimentListView(config: config, server: server, recorder: recorder) { _, play in
-                    begin(play)
+                ExperimentListView(config: config, server: server, recorder: recorder) { _, play, at in
+                    if let at {
+                        arm(play, at: at)
+                    } else {
+                        recorder.start()
+                        begin(play)
+                    }
                 }
+            case .armed:
+                armedScreen
             case .running:
                 runningScreen
             case .summary:
@@ -57,6 +69,14 @@ struct ContentView: View {
         // that it has. Recording is stopped here so the summary counts are final.
         .onChange(of: runner.phase) { _, p in
             if p == .done, screen == .running { finish() }
+        }
+        // Armed tablets begin on the clock, not on a person. Two tablets pressing
+        // Start by hand are only as synchronised as the operator's two thumbs.
+        .onReceive(clock) { now in
+            tick = now
+            guard screen == .armed, let at = startAt, let play = pending,
+                  server.serverNow() >= at else { return }
+            begin(play)
         }
     }
 
@@ -97,14 +117,67 @@ struct ContentView: View {
         }
     }
 
-    // MARK: Transitions
+    // MARK: Armed
 
-    private func begin(_ play: Play) {
+    /// Recording starts at ARM, not at the scheduled instant, so the streams are
+    /// already running when the play begins - a settled baseline before scene 0
+    /// rather than a cold start, and the two tablets' BLE and IMU cover the same
+    /// window even if one was armed earlier than the other.
+    private func arm(_ play: Play, at: Date) {
+        pending = play
+        startAt = at
         scenesTotal = play.trials.count
         uploader.clearProgress()
         recorder.start()
+        screen = .armed
+    }
+
+    private var armedScreen: some View {
+        let remaining = max(0, (startAt ?? Date()).timeIntervalSince(server.serverNow()))
+        return VStack(spacing: 22) {
+            Spacer()
+            Text(config.experimentName).font(.title2).foregroundStyle(.secondary)
+            Text(Self.countdownText(remaining))
+                .font(.system(size: 96, weight: .light, design: .monospaced))
+                .contentTransition(.numericText())
+                .monospacedDigit()
+            Text("Tablet \(config.tabletRole) · recording · starts on its own")
+                .font(.callout).foregroundStyle(.secondary)
+            if !server.clockKnown {
+                Label("server time not measured — this tablet's own clock is being used",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout).foregroundStyle(.orange)
+            }
+            Spacer()
+            HStack(spacing: 14) {
+                Button("Start now") { if let p = pending { begin(p) } }
+                    .buttonStyle(.borderedProminent)
+                Button(role: .destructive) {
+                    recorder.stop()
+                    pending = nil; startAt = nil
+                    screen = .list
+                } label: { Text("Cancel") }
+            }
+            .padding(.bottom, 30)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private static func countdownText(_ secs: TimeInterval) -> String {
+        let t = Int(secs.rounded())
+        return t >= 3600 ? String(format: "%d:%02d:%02d", t / 3600, (t % 3600) / 60, t % 60)
+                         : String(format: "%02d:%02d", t / 60, t % 60)
+    }
+
+    // MARK: Transitions
+
+    private func begin(_ play: Play) {
+        pending = nil; startAt = nil
+        scenesTotal = play.trials.count
+        if !recorder.isRecording { recorder.start() }
         recorder.writeSessionFiles(play: play, preset: "server:" + play.name,
-                                   meta: config.snapshot())
+                                   meta: config.snapshot(clockOffsetMs: server.clockOffsetMs,
+                                                         clockKnown: server.clockKnown))
         runner.start(play)
         screen = .running
     }

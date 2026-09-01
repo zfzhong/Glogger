@@ -2,10 +2,13 @@
 //  ServerClient.swift
 //  Fetches the experiment list and the trial play from the collection server.
 //
-//  Every successful play fetch is written to disk. A study run must never
-//  depend on the network staying up between trials - and this iPad is known to
-//  step its clock when it drops off wifi, so "carry on offline from the cached
-//  copy" is the safe failure mode, not "stall mid-session".
+//  Wifi is a precondition for the bench - the whole configuration lives on the
+//  server - so a play is always fetched fresh and a failed fetch is a hard stop.
+//  Falling back to a copy on disk would let an operator run yesterday's play
+//  after editing it on the web, with nothing on screen saying so.
+//
+//  The experiment LIST is still cached, because a momentary hiccup there only
+//  decides whether the landing screen is blank; it can never cause a stale run.
 //
 import Foundation
 
@@ -20,6 +23,7 @@ struct ExperimentInfo: Codable, Identifiable, Hashable {
     var totalMs: Int? = nil
     var tablets: Int? = nil
     var notes: String? = nil
+    var startISO: String? = nil
 
     var hasPlay: Bool { (playId ?? 0) > 0 && trialCount > 0 }
     var totalMsValue: Int { totalMs ?? 0 }
@@ -30,6 +34,16 @@ struct ExperimentInfo: Codable, Identifiable, Hashable {
         if (playId ?? 0) == 0 { return "no play assigned" }
         if trialCount == 0 { return "its play has no scenes" }
         return ""
+    }
+
+    /// When this experiment is scheduled to begin. Nil = run whenever.
+    var startDate: Date? {
+        guard let iso = startISO, !iso.isEmpty else { return nil }
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = f.date(from: iso) { return d }
+        f.formatOptions = [.withInternetDateTime]
+        return f.date(from: iso)
     }
 
     var durationText: String {
@@ -51,6 +65,39 @@ final class ServerClient: ObservableObject {
     @Published private(set) var busy = false
     @Published private(set) var status = ""
 
+    /// serverNow - deviceNow, in milliseconds. Two tablets arm against an
+    /// absolute instant, and this iPad's clock steps by seconds when it drops off
+    /// wifi, so every scheduled start is judged on server time rather than the
+    /// device's own. Zero until measured; `clockKnown` says which.
+    @Published private(set) var clockOffsetMs = 0
+    @Published private(set) var clockKnown = false
+
+    func deviceNowMs() -> Int { Int(Date().timeIntervalSince1970 * 1000) }
+    /// The device clock corrected onto the server's.
+    func serverNowMs() -> Int { deviceNowMs() + clockOffsetMs }
+    func serverNow() -> Date { Date(timeIntervalSince1970: Double(serverNowMs()) / 1000) }
+
+    /// Round-trip compensated: the server's reading is assumed to have been taken
+    /// halfway through the exchange, which is as good as this gets over HTTP.
+    func syncClock(base: String) async {
+        guard let url = URL(string: root(base) + "/cmii/now.json") else { return }
+        do {
+            var req = URLRequest(url: url)
+            req.timeoutInterval = 10
+            req.cachePolicy = .reloadIgnoringLocalCacheData
+            let t0 = Date().timeIntervalSince1970
+            let (data, _) = try await URLSession.shared.data(for: req)
+            let t1 = Date().timeIntervalSince1970
+            struct Now: Codable { var nowMs: Int }
+            let server = try JSONDecoder().decode(Now.self, from: data).nowMs
+            clockOffsetMs = server - Int((t0 + t1) / 2 * 1000)
+            clockKnown = true
+        } catch {
+            // Leave the last known offset in place; a momentary failure should not
+            // silently move every scheduled start by the size of the drift.
+        }
+    }
+
     private func root(_ base: String) -> String {
         var r = base.trimmingCharacters(in: .whitespaces)
         if r.hasSuffix("/") { r.removeLast() }
@@ -61,6 +108,7 @@ final class ServerClient: ObservableObject {
         guard !busy else { return }
         busy = true
         defer { busy = false }
+        await syncClock(base: base)
         guard let url = URL(string: root(base) + "/cmii/experiments.json") else {
             status = "bad server URL"; return
         }
@@ -87,29 +135,31 @@ final class ServerClient: ObservableObject {
         }
     }
 
-    /// The play for one experiment, cached to disk under its id.
+    /// The play for one experiment, always from the server.
+    ///
+    /// No disk fallback on purpose: the play is what the session IS, and running
+    /// a stale one looks exactly like running the right one.
     func fetchPlay(base: String, experimentId: Int) async -> (Play?, String) {
         guard let url = URL(string: root(base) + "/cmii/experiment/\(experimentId)/play.json")
         else { return (nil, "bad server URL") }
         do {
             var req = URLRequest(url: url)
             req.timeoutInterval = 20
+            req.cachePolicy = .reloadIgnoringLocalCacheData
             let (data, resp) = try await URLSession.shared.data(for: req)
-            guard let http = resp as? HTTPURLResponse else { return (cached(experimentId), "no response") }
+            guard let http = resp as? HTTPURLResponse else {
+                return (nil, "no response from the server")
+            }
             if http.statusCode == 404 {
                 return (nil, "that experiment has no play assigned")
             }
             guard (200..<300).contains(http.statusCode) else {
-                return (cached(experimentId), "server error \(http.statusCode)")
+                return (nil, "server error \(http.statusCode)")
             }
             let play = try JSONDecoder().decode(Play.self, from: data).sanitised()
-            try? data.write(to: cacheURL(experimentId))
             return (play, "fetched \(play.trials.count) trials")
         } catch {
-            if let c = cached(experimentId) {
-                return (c, "offline — using the cached copy (\(c.trials.count) trials)")
-            }
-            return (nil, "could not reach the server and nothing is cached")
+            return (nil, "could not reach the server — check wifi and try again")
         }
     }
 
@@ -122,15 +172,4 @@ final class ServerClient: ObservableObject {
         return dir.appendingPathComponent("experiments.json")
     }
 
-    private func cacheURL(_ experimentId: Int) -> URL {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory,
-                                           in: .userDomainMask)[0]
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("play-exp\(experimentId).json")
-    }
-
-    func cached(_ experimentId: Int) -> Play? {
-        guard let d = try? Data(contentsOf: cacheURL(experimentId)) else { return nil }
-        return (try? JSONDecoder().decode(Play.self, from: d))?.sanitised()
-    }
 }
