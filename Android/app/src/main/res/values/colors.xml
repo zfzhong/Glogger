@@ -1,0 +1,5 @@
+<resources>
+    <!-- Sampled from the corner of the iOS master so both platforms sit on the
+         same ground; the launcher mask crops the artwork, not the colour. -->
+    <color name="ic_launcher_background">#faf8f6</color>
+</resources>
