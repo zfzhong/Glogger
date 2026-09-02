@@ -147,8 +147,13 @@ final class ServerClient: ObservableObject {
     ///
     /// No disk fallback on purpose: the play is what the session IS, and running
     /// a stale one looks exactly like running the right one.
-    func fetchPlay(base: String, experimentId: Int) async -> (Play?, String) {
-        guard let url = URL(string: root(base) + "/cmii/experiment/\(experimentId)/play.json")
+    func fetchPlay(base: String, experimentId: Int, tablet: String = "A") async -> (Play?, String) {
+        // The server cuts a two-tablet play in half and hands back this tablet's
+        // side: same scene count, same slot boundaries, with the other tablet's
+        // scenes replaced by empty ones. Ignored for a one-tablet play.
+        let role = tablet.isEmpty ? "A" : tablet
+        guard let url = URL(string: root(base)
+                            + "/cmii/experiment/\(experimentId)/play.json?tablet=\(role)")
         else { return (nil, "bad server URL") }
         do {
             var req = URLRequest(url: url)

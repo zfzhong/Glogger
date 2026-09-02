@@ -53,18 +53,37 @@ struct StudyView: View {
     }
 
     private var boardBody: some View {
-        VStack(spacing: 18) {
+        // A waiting slot and an off-screen scene both dim the board and put text
+        // over it; they differ only in what the text says and why.
+        let quiet = offscreenScene ?? waitingScene
+        return VStack(spacing: 18) {
             header
             ZStack {
                 gridView
-                    .opacity(offscreenScene == nil ? 1 : 0.18)
-                    .allowsHitTesting(offscreenScene == nil)
-                    .animation(.easeInOut(duration: 0.25), value: offscreenScene == nil)
-                if let t = offscreenScene { offscreenPrompt(t) }
+                    .opacity(quiet == nil ? 1 : 0.18)
+                    .allowsHitTesting(quiet == nil)
+                    .animation(.easeInOut(duration: 0.25), value: quiet == nil)
+                if let t = offscreenScene {
+                    offscreenPrompt(t)
+                } else if let t = waitingScene {
+                    waitingPrompt(t)
+                }
             }
         }
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// The other tablet is playing. Deliberately plain and unhurried: nothing to
+    /// do here, and anything that looked interactive would pull the participant's
+    /// attention to the wrong screen.
+    @ViewBuilder private func waitingPrompt(_ t: Trial) -> some View {
+        Text(t.promptText.isEmpty ? "waiting…" : t.promptText)
+            .font(.system(size: 44, weight: .light, design: .rounded))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 52).padding(.vertical, 30)
+            .background(RoundedRectangle(cornerRadius: 24).fill(.quaternary))
+            .transition(.opacity)
     }
 
     /// A web scene takes the whole screen apart from a thin operator strip. The
@@ -169,7 +188,7 @@ struct StudyView: View {
             ProgressView(value: Double(runner.nDone),
                          total: Double(max(runner.total, 1)))
 
-            Text(offscreenScene == nil ? bannerText : "")
+            Text(offscreenScene == nil && waitingScene == nil ? bannerText : "")
                 .font(.system(size: 40, weight: .bold, design: .rounded))
                 .foregroundStyle(bannerColor)
                 .frame(maxWidth: .infinity, minHeight: 56)
@@ -307,6 +326,13 @@ struct StudyView: View {
 
     private var webScene: Trial? {
         guard let t = runner.current, t.isWeb,
+              runner.phase == .ready || runner.phase == .cued
+                || runner.phase == .settling else { return nil }
+        return t
+    }
+
+    private var waitingScene: Trial? {
+        guard let t = runner.current, t.isWaiting,
               runner.phase == .ready || runner.phase == .cued
                 || runner.phase == .settling else { return nil }
         return t

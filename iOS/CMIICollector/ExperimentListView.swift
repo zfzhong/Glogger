@@ -248,7 +248,8 @@ struct ExperimentListView: View {
         // Re-measure right before arming: the offset is what the countdown and
         // the two tablets' agreement both rest on.
         await server.syncClock(base: config.serverBase)
-        let (play, msg) = await server.fetchPlay(base: config.serverBase, experimentId: e.id)
+        let (play, msg) = await server.fetchPlay(base: config.serverBase, experimentId: e.id,
+                                                 tablet: config.tabletRole)
         guard let play else { failure = msg; return }
         // Remember the choice so uploads and session.json agree with what ran,
         // even if the operator never opens Configure.

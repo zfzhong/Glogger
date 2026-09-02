@@ -143,6 +143,10 @@ struct Trial: Codable, Identifiable {
     /// participant uses a real site; touches still land in this app's window, so
     /// they are still recorded, and the app stays foreground so the BLE beacon
     /// keeps advertising - neither of which is true of a real third-party app.
+    /// A slot this tablet does not own. The other tablet is playing; this one
+    /// waits out an interval of exactly the same length, which is what keeps the
+    /// pair in step without any link between them.
+    var empty: Bool? = nil
     var web: Bool? = nil
     var url: String? = nil
     /// A web scene may offer a menu instead of a single page. Free choice is part
@@ -198,6 +202,7 @@ struct Trial: Codable, Identifiable {
     }
     func block(default s: Play) -> Int { row * grid(default: s).cols + col }
     var isOffscreen: Bool { offscreen == true }
+    var isWaiting: Bool { empty == true }
     var isWeb: Bool { web == true && (webURL != nil || !siteList.isEmpty) }
     var siteList: [WebSite] { (sites ?? []).filter { $0.link != nil } }
     var webURL: URL? {
@@ -207,7 +212,7 @@ struct Trial: Codable, Identifiable {
     }
     /// Neither kind of scene cues a gesture on the board, so both run their slot
     /// out on the clock instead of ending on a response.
-    var isFreeform: Bool { isOffscreen || isWeb }
+    var isFreeform: Bool { isOffscreen || isWeb || isWaiting }
     var promptText: String {
         let p = (prompt ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         return p.isEmpty ? displayVerb : p

@@ -172,7 +172,11 @@ final class TrialRunner: ObservableObject {
         let window = current?.durationMs ?? s.cueTimeoutMs
         // "timeout" would read as 22 failures in a session full of water breaks.
         // Nothing was expected on screen; the window simply ended.
-        let ending = current?.isFreeform == true ? "elapsed" : "timeout"
+        // "waiting" says this tablet was not the one playing; "elapsed" says it
+        // was, and the window simply ran out. Both are non-events, but only one
+        // of them means a scene went unanswered.
+        let ending = current?.isWaiting == true ? "waiting"
+                   : current?.isFreeform == true ? "elapsed" : "timeout"
         after(window, gen) { [weak self] in self?.finish(ending) }
     }
 
