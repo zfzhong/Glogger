@@ -107,7 +107,25 @@ class TrialRunner {
         after(p.settleMs) { finish("completed") }
     }
 
-    fun cardDropped(from: Int, to: Int) { droppedOn = to }
+    /**
+     * App-level ground truth: the classifier can say "scroll" for a drag, but
+     * only the board knows whether the card reached the block the scene asked
+     * for. `to` is null when the card was thrown without landing anywhere.
+     */
+    fun cardDropped(from: Int, to: Int?, animal: String) {
+        droppedOn = to
+        deckRow(from, if (to == null) "dropMissed" else "dropped", animal, to)
+    }
+
+    /**
+     * One row per thing the board did. This is the strongest evidence the
+     * intended interaction happened - stronger than the classifier, which only
+     * ever infers from the stroke.
+     */
+    fun deckRow(block: Int, event: String, animal: String, toBlock: Int? = null) {
+        onDeckRow?.invoke(
+            "${System.currentTimeMillis()},$index,$block,$event,$animal,${toBlock ?: ""}")
+    }
 
     // MARK: - Phases
 

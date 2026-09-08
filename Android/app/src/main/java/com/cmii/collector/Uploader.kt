@@ -38,6 +38,8 @@ class Uploader {
         participant: String,
         token: String?,
         experimentId: Int,
+        deviceId: String,
+        tabletRole: String,
         onProgress: (String) -> Unit
     ): String = withContext(Dispatchers.IO) {
         if (files.isEmpty()) return@withContext "nothing to upload"
@@ -52,6 +54,14 @@ class Uploader {
                         f.asRequestBody("text/csv".toMediaTypeOrNull()))
                     .addFormDataPart("session", session)
                     .addFormDataPart("platform", "android")
+                    // What kind of tablet, for a human reading the list...
+                    .addFormDataPart("device", "${android.os.Build.MANUFACTURER} " +
+                        "${android.os.Build.MODEL} / Android ${android.os.Build.VERSION.RELEASE}")
+                    // ...and which one, for the server. Without this the only way
+                    // to attribute a session is to read the experiment's
+                    // assignment backwards, which is ambiguous with two tablets.
+                    .addFormDataPart("device_id", deviceId)
+                    .addFormDataPart("tablet", tabletRole)
                     .addFormDataPart("study", study)
                     .addFormDataPart("participant", participant)
                     .apply {

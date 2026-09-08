@@ -174,7 +174,9 @@ class MainActivity : ComponentActivity() {
                                         config.serverBase, config.studyName,
                                         config.participant,
                                         config.uploadToken.ifBlank { null },
-                                        config.experimentId) { uploadState = it }
+                                        config.experimentId,
+                                        config.deviceId,
+                                        config.tabletRole) { uploadState = it }
                                     uploading = false
                                 }
                             },

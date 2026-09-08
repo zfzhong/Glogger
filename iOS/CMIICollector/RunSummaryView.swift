@@ -104,7 +104,9 @@ struct RunSummaryView: View {
                                               base: config.serverBase, study: config.studyName,
                                               participant: config.participant,
                                               token: config.uploadToken.isEmpty ? nil : config.uploadToken,
-                                              experimentId: config.experimentId)
+                                              experimentId: config.experimentId,
+                                              deviceId: config.deviceId,
+                                              tabletRole: config.tabletRole)
                     }
                 } label: {
                     Label(uploader.busy ? "Uploading…" : "Upload", systemImage: "icloud.and.arrow.up")

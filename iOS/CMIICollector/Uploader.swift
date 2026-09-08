@@ -24,7 +24,8 @@ final class Uploader: ObservableObject {
     /// server can record participant / study / device without a second endpoint.
     func upload(dir: URL, session: String, base: String,
                 study: String, participant: String, token: String?,
-                experimentId: Int = 0) async {
+                experimentId: Int = 0,
+                deviceId: String = "", tabletRole: String = "") async {
         guard !busy else { return }
         busy = true
         defer { busy = false }
@@ -47,7 +48,8 @@ final class Uploader: ObservableObject {
             progress = "uploading \(i + 1)/\(files.count) — \(f.lastPathComponent)"
             switch await post(url: url, file: f, session: session, study: study,
                               participant: participant, token: token,
-                              experimentId: experimentId) {
+                              experimentId: experimentId,
+                              deviceId: deviceId, tabletRole: tabletRole) {
             case "stored":    ok += 1
             case "duplicate": dup += 1
             default:          failed += 1
@@ -60,7 +62,8 @@ final class Uploader: ObservableObject {
 
     private func post(url: URL, file: URL, session: String, study: String,
                       participant: String, token: String?,
-                      experimentId: Int) async -> String {
+                      experimentId: Int,
+                      deviceId: String, tabletRole: String) async -> String {
         guard let data = try? Data(contentsOf: file) else { return "read-error" }
 
         let boundary = "cmii-\(UUID().uuidString)"
@@ -83,6 +86,12 @@ final class Uploader: ObservableObject {
         field("session", session)
         field("platform", "ios")
         field("device", UIDevice.current.model + " / iOS " + UIDevice.current.systemVersion)
+        // The line above is a description; this is an identity. It is what lets
+        // the server say WHICH tablet uploaded, rather than what kind.
+        field("device_id", deviceId)
+        // Only load-bearing for a two-tablet experiment, where the experiment
+        // alone names two candidates and the role picks between them.
+        field("tablet", tabletRole)
         field("study", study)
         field("participant", participant)
         // Lets the server file this session under its experiment on arrival,
