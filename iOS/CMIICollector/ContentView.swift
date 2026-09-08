@@ -110,6 +110,10 @@ struct ContentView: View {
     private func begin(_ play: Play, joinedLateMs: Int = 0) {
         scenesTotal = play.trials.count
         uploader.clearProgress()
+        // Only Tablet B is the beacon - see Config.tabletRole. This used to
+        // advertise unconditionally, so two tablets would both have claimed the
+        // same name and the A-versus-B contrast would have been gone.
+        recorder.advertise = (config.tabletRole == "B")
         recorder.start()
         recorder.writeSessionFiles(play: play, preset: "server:" + play.name,
                                    meta: config.snapshot(clockOffsetMs: server.clockOffsetMs,

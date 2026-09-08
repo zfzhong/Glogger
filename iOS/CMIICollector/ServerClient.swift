@@ -32,8 +32,37 @@ struct ExperimentInfo: Codable, Identifiable, Hashable {
     var posture: String? = nil
     var tabletOrientation: String? = nil
     var missing: [String]? = nil
+    // Which device plays which half. A tablet matches its own id against these
+    // rather than being told its role by hand.
+    var tabletA: String? = nil
+    var tabletB: String? = nil
+    var tabletALabel: String? = nil
+    var tabletBLabel: String? = nil
+    var advertiseA: String? = nil
+    var advertiseB: String? = nil
 
     var hasPlay: Bool { (playId ?? 0) > 0 && trialCount > 0 }
+    var hasAssignment: Bool { tabletA != nil || tabletB != nil }
+
+    /// This device's half, or nil when it is not one of the assigned tablets.
+    func role(for deviceId: String) -> String? {
+        if deviceId == tabletA { return "A" }
+        if deviceId == tabletB { return "B" }
+        return nil
+    }
+
+    /// The advertise name for this device's half, as the server holds it.
+    func advertiseName(for deviceId: String) -> String? {
+        if deviceId == tabletA { return advertiseA }
+        if deviceId == tabletB { return advertiseB }
+        return nil
+    }
+
+    var assignedTo: String {
+        [tabletALabel.map { "A: \($0)" }, tabletBLabel.map { "B: \($0)" }]
+            .compactMap { $0 }.joined(separator: " · ")
+    }
+
     var totalMsValue: Int { totalMs ?? 0 }
     var tabletsValue: Int { tablets ?? 1 }
 
@@ -110,6 +139,36 @@ final class ServerClient: ObservableObject {
         var r = base.trimmingCharacters(in: .whitespaces)
         if r.hasSuffix("/") { r.removeLast() }
         return r
+    }
+
+    /// Announce this tablet, and learn what the server calls it.
+    ///
+    /// Cheap and idempotent, so it runs on every list refresh: a tablet named on
+    /// the web picks that up without anyone restarting it.
+    @discardableResult
+    func register(base: String, deviceId: String, model: String,
+                  os: String, screen: String) async -> (name: String, advertise: String)? {
+        guard let url = URL(string: root(base) + "/cmii/device/register/") else { return nil }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 15
+        let fields = ["device_id": deviceId, "platform": "ios", "model": model,
+                      "os_version": os, "screen": screen]
+        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        // Percent-encode conservatively: a model string like "iPad14,5" carries a
+        // comma, which would otherwise arrive as a field separator.
+        let encoded = fields.map { key, value -> String in
+            let safe = value.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? ""
+            return key + "=" + safe
+        }
+        req.httpBody = encoded.joined(separator: "&").data(using: .utf8)
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { return nil }
+            return (obj["name"] as? String ?? "", obj["advertiseName"] as? String ?? "")
+        } catch { return nil }
     }
 
     func loadExperiments(base: String) async {

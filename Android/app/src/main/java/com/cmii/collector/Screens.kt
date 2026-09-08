@@ -104,11 +104,29 @@ fun ExperimentListScreen(
         }
         HorizontalDivider()
 
-        if (experiments.isEmpty()) {
+        // Only what this tablet can actually run. An experiment assigned to the
+        // other tablet is noise at the bench - but one with NO assignment stays,
+        // because a freshly created experiment would otherwise vanish from every
+        // tablet at once and look broken.
+        val deviceId = config.deviceId
+        val mine = experiments.filter {
+            !it.hasAssignment || it.roleFor(deviceId) != null
+        }
+        val hidden = experiments.size - mine.size
+
+        if (mine.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(if (busy) "Loading…" else "No experiments",
-                     style = MaterialTheme.typography.titleMedium,
-                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(if (busy) "Loading…"
+                         else if (hidden > 0) "Nothing assigned to this tablet"
+                         else "No experiments",
+                         style = MaterialTheme.typography.titleMedium,
+                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (hidden > 0 && !busy)
+                        Text("$hidden assigned to another tablet",
+                             style = MaterialTheme.typography.bodySmall,
+                             color = MaterialTheme.colorScheme.outline)
+                }
             }
         } else {
             LazyColumn(
@@ -116,8 +134,17 @@ fun ExperimentListScreen(
                 contentPadding = PaddingValues(20.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                items(experiments, key = { it.id }) { e ->
-                    ExperimentRow(e, server, config.deviceId, tick, loadingId) { onStart(e) }
+                items(mine, key = { it.id }) { e ->
+                    ExperimentRow(e, server, deviceId, tick, loadingId) { onStart(e) }
+                }
+                if (hidden > 0) item {
+                    // Never silently: an experiment that is simply misassigned
+                    // would otherwise look like it was never created.
+                    Text("$hidden experiment${if (hidden == 1) "" else "s"} " +
+                         "assigned to another tablet, hidden",
+                         style = MaterialTheme.typography.bodySmall,
+                         color = MaterialTheme.colorScheme.outline,
+                         modifier = Modifier.padding(top = 6.dp))
                 }
             }
         }

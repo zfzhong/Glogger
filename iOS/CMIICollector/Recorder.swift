@@ -285,6 +285,9 @@ final class Recorder: ObservableObject {
             "play_name": play.name,
             "started_wall_ms": TrialRunner.nowMs(),
             "advertise_name": info.advertiseName,
+            // Analysis needs this: no BLE from a silent Tablet A is correct, no
+            // BLE from Tablet B is a failed session.
+            "advertised": advertise,
             "participant": info.participant,
             "study": info.studyName,
             "watch_wrist": info.watchWrist,

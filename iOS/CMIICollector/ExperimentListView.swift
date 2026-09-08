@@ -33,7 +33,7 @@ struct ExperimentListView: View {
         VStack(spacing: 0) {
             heading
             Divider()
-            if server.experiments.isEmpty {
+            if visible.isEmpty {
                 empty
             } else {
                 list
@@ -70,7 +70,14 @@ struct ExperimentListView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 240)
 
-                Label(config.advertiseName, systemImage: "dot.radiowaves.left.and.right")
+                Text(config.deviceName.isEmpty ? "unnamed tablet" : config.deviceName)
+                    .font(.callout)
+                    .foregroundStyle(config.deviceName.isEmpty ? AnyShapeStyle(.orange)
+                                                               : AnyShapeStyle(.secondary))
+
+                Label(config.tabletRole == "B" ? config.advertiseName : "silent — decoy tablet",
+                      systemImage: config.tabletRole == "B"
+                          ? "dot.radiowaves.left.and.right" : "speaker.slash")
                     .font(.callout).foregroundStyle(.secondary)
 
                 Spacer()
@@ -105,8 +112,13 @@ struct ExperimentListView: View {
         VStack(spacing: 14) {
             Spacer()
             Image(systemName: "flask").font(.system(size: 44)).foregroundStyle(.tertiary)
-            Text(server.busy ? "Loading…" : "No experiments")
+            Text(server.busy ? "Loading…"
+                 : hiddenCount > 0 ? "Nothing assigned to this tablet" : "No experiments")
                 .font(.title3).foregroundStyle(.secondary)
+            if hiddenCount > 0 && !server.busy {
+                Text("\(hiddenCount) assigned to another tablet")
+                    .font(.callout).foregroundStyle(.tertiary)
+            }
             if !server.busy {
                 Text("Create one on the server, then Refresh.")
                     .font(.callout).foregroundStyle(.tertiary)
@@ -118,10 +130,30 @@ struct ExperimentListView: View {
 
     // MARK: List
 
+    /// Only what this tablet can actually run. An experiment assigned to the
+    /// other tablet is noise at the bench - but one with NO assignment stays,
+    /// because a freshly created experiment would otherwise vanish from every
+    /// tablet at once and look broken.
+    private var visible: [ExperimentInfo] {
+        server.experiments.filter {
+            !$0.hasAssignment || $0.role(for: config.deviceId) != nil
+        }
+    }
+
+    private var hiddenCount: Int { server.experiments.count - visible.count }
+
     private var list: some View {
         ScrollView {
             LazyVStack(spacing: 12) {
-                ForEach(server.experiments) { e in row(e) }
+                ForEach(visible) { e in row(e) }
+                if hiddenCount > 0 {
+                    // Never silently: an experiment that is simply misassigned
+                    // would otherwise look like it was never created.
+                    Text("\(hiddenCount) experiment\(hiddenCount == 1 ? "" : "s") assigned to another tablet, hidden")
+                        .font(.caption).foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 4)
+                }
             }
             .padding(20)
         }
@@ -153,6 +185,15 @@ struct ExperimentListView: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+                if e.hasAssignment {
+                    let mine = e.role(for: config.deviceId)
+                    Label(mine != nil ? "this tablet plays \(mine!) · \(e.assignedTo)"
+                                      : "assigned to \(e.assignedTo)",
+                          systemImage: mine != nil ? "checkmark.circle" : "iphone.slash")
+                        .font(.caption)
+                        .foregroundStyle(mine != nil ? AnyShapeStyle(.green) : AnyShapeStyle(.orange))
+                }
 
                 if let missing = e.missing, !missing.isEmpty {
                     Label("not described on the server: " + missing.joined(separator: ", "),
@@ -209,6 +250,17 @@ struct ExperimentListView: View {
 
     private func refresh() async {
         failure = ""
+        // Idempotent, so a tablet named on the web picks that up on the next
+        // refresh rather than needing a restart.
+        let b = UIScreen.main.nativeBounds
+        if let seen = await server.register(
+            base: config.serverBase, deviceId: config.deviceId,
+            model: Config.hardwareModel,
+            os: "iOS " + UIDevice.current.systemVersion,
+            screen: "\(Int(b.width))x\(Int(b.height))") {
+            config.deviceName = seen.name
+            if !seen.advertise.isEmpty { config.advertiseName = seen.advertise }
+        }
         await server.loadExperiments(base: config.serverBase)
     }
 
@@ -224,6 +276,10 @@ struct ExperimentListView: View {
     /// Judged on server time, never the tablet's own.
     private func canStart(_ e: ExperimentInfo) -> Bool {
         guard e.hasPlay else { return false }
+        // An assigned experiment names its tablets. This one may not be either -
+        // the operator picked up the wrong tablet, or it was never assigned - and
+        // running it would file the session under a role it does not have.
+        if e.hasAssignment && e.role(for: config.deviceId) == nil { return false }
         guard let d = e.startDate else { return e.tabletsValue == 1 }
         return server.serverNow() >= d
     }
@@ -256,6 +312,14 @@ struct ExperimentListView: View {
         config.experimentId = e.id
         config.experimentName = e.name
         config.adopt(e)
+        // The assignment wins over the local picker, so two tablets can no longer
+        // contradict each other about which half they are playing.
+        if let mine = e.role(for: config.deviceId) {
+            config.tabletRole = mine
+            if let adv = e.advertiseName(for: config.deviceId), !adv.isEmpty {
+                config.advertiseName = adv
+            }
+        }
         // How far into the play's own timeline this tablet is arriving. The other
         // tablet computes the same number from the same instant, so both land on
         // the same scene however far apart the two button presses were.

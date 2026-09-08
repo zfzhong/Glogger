@@ -58,12 +58,51 @@ final class Config: ObservableObject {
     }
     @Published var experimentName: String { didSet { put("experimentName", experimentName) } }
 
+    // MARK: Identity
+
+    /// This tablet's identity, generated once and kept.
+    ///
+    /// Self-generated rather than identifierForVendor, which changes when every
+    /// app from this vendor is removed - an identity that silently changes turns
+    /// an assigned tablet into an unassigned one with no visible cause.
+    var deviceId: String {
+        if let existing = UserDefaults.standard.string(forKey: "deviceId") { return existing }
+        let fresh = UUID().uuidString
+        UserDefaults.standard.set(fresh, forKey: "deviceId")
+        return fresh
+    }
+
+    /// What the server calls this tablet, once an admin has named it.
+    @Published var deviceName: String { didSet { put("deviceName", deviceName) } }
+
+    /// The hardware string, "iPad14,5" rather than the useless "iPad".
+    static var hardwareModel: String {
+        var sys = utsname(); uname(&sys)
+        return withUnsafePointer(to: &sys.machine) {
+            $0.withMemoryRebound(to: CChar.self, capacity: 1) { String(cString: $0) }
+        }
+    }
+
     // MARK: BLE
     @Published var advertiseName: String { didSet { put("advertiseName", advertiseName) } }
 
     /// Which tablet this is in a two-tablet play. Both download the same play and
     /// follow the same timeline; the role decides whose scenes are whose.
-    @Published var tabletRole: String { didSet { put("tabletRole", tabletRole) } }
+    ///
+    /// It also decides the beacon. Only Tablet B advertises: Tablet A is the
+    /// decoy, and tapping it looks identical at the wrist - same reach, same
+    /// impulse, same IMU signature. The ONLY thing separating "tapped B" from
+    /// "tapped A" is that the wrist stayed far from the beacon, so a silent
+    /// Tablet A is the measurement rather than an omission. Two beacons would
+    /// erase that contrast and nothing downstream would notice.
+    @Published var tabletRole: String {
+        didSet { put("tabletRole", tabletRole) }
+    }
+
+    /// True when the beacon setting contradicts the bench design.
+    func advertiseUnexpected(_ advertising: Bool) -> Bool {
+        (tabletRole == "B" && !advertising) || (tabletRole == "A" && advertising)
+    }
 
     // MARK: Session metadata - required before analysis (spec §7)
     @Published var participant: String { didSet { put("participant", participant) } }
@@ -81,6 +120,7 @@ final class Config: ObservableObject {
         experimentName    = d.string(forKey: "experimentName") ?? ""
         advertiseName     = d.string(forKey: "advertiseName") ?? "CMII-Pad"
         tabletRole        = d.string(forKey: "tabletRole") ?? "A"
+        deviceName        = d.string(forKey: "deviceName") ?? ""
         participant       = d.string(forKey: "participant") ?? ""
         studyName         = d.string(forKey: "studyName") ?? "elicitation"
         watchWrist        = d.string(forKey: "watchWrist") ?? ""
