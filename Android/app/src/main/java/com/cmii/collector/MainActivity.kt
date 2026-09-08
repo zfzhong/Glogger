@@ -81,14 +81,14 @@ class MainActivity : ComponentActivity() {
 
                 suspend fun refresh() {
                     busy = true
-                    val m = resources.displayMetrics
+                    val (sw, sh) = screenPx()
                     // Idempotent, so a tablet named on the web picks that up on the
                     // next refresh rather than needing a restart.
                     server.register(
                         config.serverBase, config.deviceId,
                         android.os.Build.MODEL,
                         "Android ${android.os.Build.VERSION.RELEASE}",
-                        "${m.widthPixels}x${m.heightPixels}"
+                        "${sw}x$sh"
                     )?.let { (name, adv) ->
                         config.deviceName = name
                         if (adv.isNotBlank()) config.advertiseName = adv
@@ -219,10 +219,24 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * The PHYSICAL display, not the app's window.
+     *
+     * resources.displayMetrics reports the window, which shrinks with insets and
+     * window state - the same tablet registered as 2560x1536 once and 1600x1200
+     * the next time. Screen geometry is study-relevant, because reach distance is
+     * part of what is being measured, and a number that drifts is worse than none.
+     */
+    private fun screenPx(): Pair<Int, Int> {
+        val b = windowManager.maximumWindowMetrics.bounds
+        return b.width() to b.height()
+    }
+
     private fun deviceLine(): String {
-        val m = resources.displayMetrics
-        return "${android.os.Build.MODEL} · ${m.widthPixels}x${m.heightPixels} · " +
-               "${m.densityDpi} dpi · Android ${android.os.Build.VERSION.RELEASE}"
+        val (w, h) = screenPx()
+        return "${android.os.Build.MODEL} · ${w}x$h · " +
+               "${resources.displayMetrics.densityDpi} dpi · " +
+               "Android ${android.os.Build.VERSION.RELEASE}"
     }
 
     private fun begin(play: Play, joinedLateMs: Int) {
@@ -234,7 +248,7 @@ class MainActivity : ComponentActivity() {
         // under one name would put two devices behind a single label in the
         // watch's log, with no way to separate them afterwards.
         if (config.advertise) beacon.start(config.advertiseName)
-        val m = resources.displayMetrics
+        val (sw, sh) = screenPx()
         recorder.writeSessionFiles(play, SessionMeta(
             experimentId = config.experimentId, experimentName = config.experimentName,
             advertiseName = config.advertiseName, participant = config.participant,
@@ -244,8 +258,8 @@ class MainActivity : ComponentActivity() {
             advertised = config.advertise,
             serverClockOffsetMs = server.clockOffsetMs,
             serverClockMeasured = server.clockKnown, joinedLateMs = joinedLateMs,
-            playJson = "{}", screenWidthPx = m.widthPixels,
-            screenHeightPx = m.heightPixels, densityDpi = m.densityDpi))
+            playJson = "{}", screenWidthPx = sw, screenHeightPx = sh,
+            densityDpi = resources.displayMetrics.densityDpi))
         runner.start(play, joinedLateMs)
         screen = Screen.RUNNING
     }
