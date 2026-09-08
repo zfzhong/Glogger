@@ -35,12 +35,30 @@ class MainActivity : ComponentActivity() {
     private lateinit var uploader: Uploader
     private val runner = TrialRunner()
 
-    private enum class Screen { LIST, CONFIG, RUNNING, SUMMARY }
+    private enum class Screen { LIST, CONFIG, ARMED, RUNNING, SUMMARY }
     private var screen by mutableStateOf(Screen.LIST)
     private var scenesTotal by mutableIntStateOf(0)
     private var uploadState by mutableStateOf("")
     private var uploading by mutableStateOf(false)
     private var counter by mutableIntStateOf(0)   // redraws the live counts
+
+    /** The play downloaded and waiting for its scheduled instant. */
+    private var armedPlay: Play? = null
+    private var armedStartAt = 0L
+    private var armedRemainingMs by mutableStateOf(0L)
+
+    companion object {
+        /**
+         * How long before the start the recorder and beacon come up.
+         *
+         * Not at the instant itself: the watch has to find the beacon before it
+         * can log anything, and a beacon that starts when scene 1 does costs
+         * the first seconds of the only signal that says which tablet was
+         * touched. Not at arming either - a tablet armed twenty minutes early
+         * would write twenty minutes of IMU before the session begins.
+         */
+        const val PREROLL_MS = 10_000L
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -142,10 +160,19 @@ class MainActivity : ComponentActivity() {
                                     e.advertiseFor(config.deviceId)
                                         ?.takeIf { it.isNotBlank() }
                                         ?.let { config.advertiseName = it }
-                                    val late = e.startAtMs?.let {
-                                        maxOf(0L, server.serverNowMs() - it).toInt()
-                                    } ?: 0
-                                    begin(play, late)
+                                    val startAt = e.startAtMs
+                                    if (startAt != null && server.serverNowMs() < startAt) {
+                                        // Still ahead of the instant: hold the
+                                        // play and let the clock start it, so two
+                                        // tablets set going by one pair of hands
+                                        // still begin together.
+                                        arm(play, startAt)
+                                    } else {
+                                        val late = startAt?.let {
+                                            maxOf(0L, server.serverNowMs() - it).toInt()
+                                        } ?: 0
+                                        begin(play, late)
+                                    }
                                 }
                             })
 
@@ -153,6 +180,33 @@ class MainActivity : ComponentActivity() {
                             config = config, beacon = beacon,
                             deviceLine = deviceLine(),
                             onDone = { screen = Screen.LIST; scope.launch { refresh() } })
+
+                        Screen.ARMED -> {
+                            val p = armedPlay
+                            if (p == null) { screen = Screen.LIST }
+                            else {
+                                // One tick per 100 ms rather than per second: the
+                                // start has to land on the instant, not on
+                                // whenever this tablet's second happened to roll
+                                // over, or two tablets are up to a second apart.
+                                LaunchedEffect(armedStartAt) {
+                                    while (screen == Screen.ARMED) {
+                                        val left = armedStartAt - server.serverNowMs()
+                                        armedRemainingMs = left
+                                        if (left <= PREROLL_MS && !recorder.isRecording)
+                                            startRecording(p)
+                                        if (left <= 0L) { beginArmed(p); break }
+                                        kotlinx.coroutines.delay(100)
+                                    }
+                                }
+                                ArmedScreen(
+                                    play = p, experimentName = config.experimentName,
+                                    remainingMs = armedRemainingMs,
+                                    recording = recorder.isRecording,
+                                    clockKnown = server.clockKnown,
+                                    onCancel = { cancelArmed() })
+                            }
+                        }
 
                         Screen.RUNNING -> Column(Modifier.fillMaxSize()) {
                             RunBar()
@@ -245,9 +299,41 @@ class MainActivity : ComponentActivity() {
                "Android ${android.os.Build.VERSION.RELEASE}"
     }
 
-    private fun begin(play: Play, joinedLateMs: Int) {
+    /** Hold a downloaded play until its scheduled instant. */
+    private fun arm(play: Play, startAt: Long) {
+        armedPlay = play
+        armedStartAt = startAt
+        armedRemainingMs = startAt - server.serverNowMs()
         scenesTotal = play.trials.size
         uploadState = ""
+        screen = Screen.ARMED
+    }
+
+    /** The instant arrived: the recorder is already running, so only run the play. */
+    private fun beginArmed(play: Play) {
+        if (!recorder.isRecording) startRecording(play)
+        armedPlay = null
+        runner.start(play, 0)
+        screen = Screen.RUNNING
+    }
+
+    private fun cancelArmed() {
+        armedPlay = null
+        armedStartAt = 0L
+        // Whatever pre-roll was captured is not a session; drop it rather than
+        // leaving a stub folder that looks like an aborted run.
+        if (recorder.isRecording) { beacon.stop(); motion.stop(); recorder.stop() }
+        recorder.sessionName = Recorder.defaultName()
+        screen = Screen.LIST
+    }
+
+    /**
+     * Sensors, beacon and session files - everything except walking the play.
+     *
+     * Separate from begin() so an armed tablet can be recording, and its beacon
+     * discoverable, before the play starts.
+     */
+    private fun startRecording(play: Play, joinedLateMs: Int = 0) {
         recorder.start()
         motion.start(recorder)
         // Only the tablet designated as the beacon advertises. Both advertising
@@ -266,6 +352,12 @@ class MainActivity : ComponentActivity() {
             serverClockMeasured = server.clockKnown, joinedLateMs = joinedLateMs,
             playJson = "{}", screenWidthPx = sw, screenHeightPx = sh,
             densityDpi = resources.displayMetrics.densityDpi))
+    }
+
+    private fun begin(play: Play, joinedLateMs: Int) {
+        scenesTotal = play.trials.size
+        uploadState = ""
+        startRecording(play, joinedLateMs)
         runner.start(play, joinedLateMs)
         screen = Screen.RUNNING
     }

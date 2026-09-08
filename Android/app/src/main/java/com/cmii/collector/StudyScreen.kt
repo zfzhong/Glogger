@@ -426,3 +426,37 @@ private fun Panel(text: String, big: Boolean, caption: String? = null) {
         }
     }
 }
+
+/**
+ * The board with nothing happening on it: every deck face down, none live, none
+ * touchable.
+ *
+ * Used behind the countdown while a tablet waits for its scheduled start. It
+ * deliberately shows no cue - the layout, so the participant knows where to
+ * look, without the instruction, which they would otherwise have several
+ * seconds to rehearse.
+ */
+@Composable
+fun StaticBoard(rows: Int, cols: Int, pool: List<String>) {
+    val gap = if (rows * cols > 9) 10.dp else 16.dp
+    val big = max(rows, cols)
+    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(gap)) {
+        for (r in 0 until rows) {
+            Row(Modifier.fillMaxWidth().weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(gap)) {
+                for (c in 0 until cols) {
+                    val b = r * cols + c
+                    val animals =
+                        if (pool.isEmpty()) listOf(Animals.fallback)
+                        else (0 until 3).map { pool[(b * 3 + it) % pool.size] }
+                    Cell(block = b, live = false, target = false, flashing = false,
+                         big = big, verb = null, animals = animals,
+                         state = DeckState(), onState = {}, onEvent = {},
+                         carrying = false, onFrame = {}, onDragChanged = {},
+                         onDragEnded = { _, _ -> },
+                         modifier = Modifier.weight(1f).fillMaxHeight())
+                }
+            }
+        }
+    }
+}

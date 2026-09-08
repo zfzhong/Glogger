@@ -154,8 +154,12 @@ private fun ExperimentRow(
     // assigned - and running it anyway would file the session under a role it
     // does not have.
     val role = e.resolvedRole(deviceId)
-    val canStart = e.hasPlay && role != null &&
-        (startAt?.let { server.serverNowMs() >= it } ?: (e.tablets == 1))
+    // A future start time no longer disables the button, it changes what the
+    // button does: the tablet arms and waits on a countdown. Disabling it meant
+    // the only possible outcome was joining late, which is what the "not_run"
+    // rows were compensating for. Both tablets can now be set going in advance
+    // by one pair of hands and still begin on the same instant.
+    val canStart = e.hasPlay && role != null
 
     Surface(
         shape = RoundedCornerShape(12.dp),
@@ -216,6 +220,10 @@ private fun ExperimentRow(
                         Text(countdown(startAt, server.serverNowMs()),
                              style = MaterialTheme.typography.bodySmall,
                              color = if (canStart) good() else MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (server.serverNowMs() < startAt)
+                            Text("tap now to wait for it",
+                                 style = MaterialTheme.typography.bodySmall,
+                                 color = MaterialTheme.colorScheme.outline)
                     } else if (e.tablets > 1) {
                         Text("two tablets — needs a start time",
                              style = MaterialTheme.typography.bodySmall,

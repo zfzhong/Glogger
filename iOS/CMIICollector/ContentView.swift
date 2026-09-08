@@ -21,16 +21,60 @@ struct ContentView: View {
     @StateObject private var config = Config()
     @StateObject private var server = ServerClient()
 
-    private enum Screen { case list, running, summary }
+    private enum Screen { case list, armed, running, summary }
     @State private var screen: Screen = .list
     @State private var scenesTotal = 0
+
+    /// The play downloaded and waiting for its scheduled instant.
+    @State private var armedPlay: Play?
+    @State private var armedStart: Date?
+    @State private var armedRemaining: TimeInterval = 0
+
+    /// How long before the start the recorder and beacon come up.
+    ///
+    /// Not at the instant itself: the watch has to find the beacon before it can
+    /// log anything, and a beacon that starts when scene 1 does costs the first
+    /// seconds of the only signal that says which tablet was touched. Not at
+    /// arming either - a tablet armed twenty minutes early would write twenty
+    /// minutes of IMU before the session begins.
+    private static let preroll: TimeInterval = 10
 
     var body: some View {
         Group {
             switch screen {
             case .list:
-                ExperimentListView(config: config, server: server, recorder: recorder) { _, play, lateMs in
-                    begin(play, joinedLateMs: lateMs)
+                ExperimentListView(config: config, server: server, recorder: recorder) { e, play, lateMs in
+                    if let d = e.startDate, server.serverNow() < d {
+                        // Still ahead of the instant: hold the play and let the
+                        // clock start it, so two tablets set going by one pair of
+                        // hands still begin together.
+                        arm(play, at: d)
+                    } else {
+                        begin(play, joinedLateMs: lateMs)
+                    }
+                }
+            case .armed:
+                if let play = armedPlay, let at = armedStart {
+                    ArmedView(play: play, experimentName: config.experimentName,
+                              remaining: armedRemaining,
+                              isRecording: recorder.isRecording,
+                              clockKnown: server.clockKnown,
+                              onCancel: cancelArmed)
+                        // Ten ticks a second, not one: the start has to land on
+                        // the instant, not on whenever this tablet's second
+                        // happened to roll over, or two tablets are up to a
+                        // second apart.
+                        .onReceive(Timer.publish(every: 0.1, on: .main, in: .common)
+                                        .autoconnect()) { _ in
+                            let left = at.timeIntervalSince(server.serverNow())
+                            armedRemaining = left
+                            if left <= Self.preroll, !recorder.isRecording {
+                                startRecording(play)
+                            }
+                            if left <= 0 { beginArmed(play) }
+                        }
+                } else {
+                    Color.clear.onAppear { screen = .list }
                 }
             case .running:
                 runningScreen
@@ -110,6 +154,44 @@ struct ContentView: View {
     private func begin(_ play: Play, joinedLateMs: Int = 0) {
         scenesTotal = play.trials.count
         uploader.clearProgress()
+        startRecording(play)
+        runner.start(play, joinedLateMs: joinedLateMs)
+        screen = .running
+    }
+
+    /// Hold a downloaded play until its scheduled instant.
+    private func arm(_ play: Play, at date: Date) {
+        armedPlay = play
+        armedStart = date
+        armedRemaining = date.timeIntervalSince(server.serverNow())
+        scenesTotal = play.trials.count
+        uploader.clearProgress()
+        screen = .armed
+    }
+
+    /// The instant arrived: the recorder is already running, so only run the play.
+    private func beginArmed(_ play: Play) {
+        guard screen == .armed else { return }
+        if !recorder.isRecording { startRecording(play) }
+        armedPlay = nil; armedStart = nil
+        runner.start(play, joinedLateMs: 0)
+        screen = .running
+    }
+
+    private func cancelArmed() {
+        armedPlay = nil; armedStart = nil
+        // Whatever pre-roll was captured is not a session; drop it rather than
+        // leaving a stub folder that looks like an aborted run.
+        if recorder.isRecording { recorder.stop() }
+        recorder.sessionName = Recorder.defaultName()
+        screen = .list
+    }
+
+    /// Sensors, beacon and session files - everything except walking the play.
+    ///
+    /// Separate from begin() so an armed tablet can be recording, and its beacon
+    /// discoverable, before the play starts.
+    private func startRecording(_ play: Play) {
         // The experiment says which tablet is the beacon; the letter no longer
         // decides it. Set when the run was chosen, on the list screen.
         recorder.advertise = config.advertise
@@ -117,8 +199,6 @@ struct ContentView: View {
         recorder.writeSessionFiles(play: play, preset: "server:" + play.name,
                                    meta: config.snapshot(clockOffsetMs: server.clockOffsetMs,
                                                          clockKnown: server.clockKnown))
-        runner.start(play, joinedLateMs: joinedLateMs)
-        screen = .running
     }
 
     private func finish() {

@@ -269,8 +269,10 @@ struct ExperimentListView: View {
         // the operator picked up the wrong tablet, or it was never assigned - and
         // running it would file the session under a role it does not have.
         guard e.resolvedRole(for: config.deviceId) != nil else { return false }
-        guard let d = e.startDate else { return e.tabletsValue == 1 }
-        return server.serverNow() >= d
+        // A future start time no longer disables the button, it changes what the
+        // button does: the tablet arms and waits on a countdown. Disabling it
+        // meant the only possible outcome was joining late.
+        return true
     }
 
     private func countdown(to d: Date) -> String {
