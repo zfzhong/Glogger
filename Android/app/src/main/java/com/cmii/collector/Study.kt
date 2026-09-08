@@ -144,8 +144,37 @@ data class ExperimentInfo(
     val interactingHand: String = "",
     val posture: String = "",
     val tabletOrientation: String = "",
-    val missing: List<String> = emptyList()
+    val missing: List<String> = emptyList(),
+    // Which device plays which half. A tablet matches its own id against these
+    // rather than being told its role by hand.
+    val tabletA: String? = null,
+    val tabletB: String? = null,
+    val tabletALabel: String? = null,
+    val tabletBLabel: String? = null,
+    val advertiseA: String? = null,
+    val advertiseB: String? = null
 ) {
+    val hasAssignment: Boolean get() = tabletA != null || tabletB != null
+
+    /** This device's half, or null when it is not one of the assigned tablets. */
+    fun roleFor(deviceId: String): String? = when (deviceId) {
+        tabletA -> "A"
+        tabletB -> "B"
+        else -> null
+    }
+
+    /** The advertise name for this device's half, as the server holds it. */
+    fun advertiseFor(deviceId: String): String? = when (deviceId) {
+        tabletA -> advertiseA
+        tabletB -> advertiseB
+        else -> null
+    }
+
+    val assignedTo: String
+        get() = listOfNotNull(
+            tabletALabel?.let { "A: $it" }, tabletBLabel?.let { "B: $it" }
+        ).joinToString(" · ")
+
     val hasPlay: Boolean get() = (playId ?: 0) > 0 && trialCount > 0
 
     /** Why Start is unavailable, in the operator's terms rather than the schema's. */

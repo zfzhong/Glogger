@@ -35,7 +35,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var uploader: Uploader
     private val runner = TrialRunner()
 
-    private enum class Screen { LIST, RUNNING, SUMMARY }
+    private enum class Screen { LIST, CONFIG, RUNNING, SUMMARY }
     private var screen by mutableStateOf(Screen.LIST)
     private var scenesTotal by mutableIntStateOf(0)
     private var uploadState by mutableStateOf("")
@@ -81,6 +81,18 @@ class MainActivity : ComponentActivity() {
 
                 suspend fun refresh() {
                     busy = true
+                    val m = resources.displayMetrics
+                    // Idempotent, so a tablet named on the web picks that up on the
+                    // next refresh rather than needing a restart.
+                    server.register(
+                        config.serverBase, config.deviceId,
+                        android.os.Build.MODEL,
+                        "Android ${android.os.Build.VERSION.RELEASE}",
+                        "${m.widthPixels}x${m.heightPixels}"
+                    )?.let { (name, adv) ->
+                        config.deviceName = name
+                        if (adv.isNotBlank()) config.advertiseName = adv
+                    }
                     val (list, msg) = server.loadExperiments(config.serverBase)
                     experiments = list; status = msg; busy = false
                 }
@@ -101,6 +113,7 @@ class MainActivity : ComponentActivity() {
                             config = config, server = server, experiments = experiments,
                             status = status, busy = busy, failure = failure,
                             onRefresh = { scope.launch { refresh() } },
+                            onConfigure = { screen = Screen.CONFIG },
                             loadingId = loadingId,
                             onStart = { e ->
                                 scope.launch {
@@ -115,6 +128,16 @@ class MainActivity : ComponentActivity() {
                                     config.experimentId = e.id
                                     config.experimentName = e.name
                                     config.adopt(e)
+                                    // The assignment wins over the local picker:
+                                    // two tablets can no longer contradict each
+                                    // other about which half they are playing.
+                                    e.roleFor(config.deviceId)?.let { r ->
+                                        config.tabletRole = r
+                                        config.followRole()
+                                        e.advertiseFor(config.deviceId)
+                                            ?.takeIf { it.isNotBlank() }
+                                            ?.let { config.advertiseName = it }
+                                    }
                                     val late = e.startAtMs?.let {
                                         maxOf(0L, server.serverNowMs() - it).toInt()
                                     } ?: 0
@@ -122,10 +145,17 @@ class MainActivity : ComponentActivity() {
                                 }
                             })
 
+                        Screen.CONFIG -> ConfigScreen(
+                            config = config, beacon = beacon,
+                            deviceLine = deviceLine(),
+                            onDone = { screen = Screen.LIST; scope.launch { refresh() } })
+
                         Screen.RUNNING -> Column(Modifier.fillMaxSize()) {
                             RunBar()
                             HorizontalDivider()
-                            StudyScreen(runner, runner.play?.waiting ?: "waiting…")
+                            StudyScreen(runner, runner.play?.waiting ?: "waiting…") { ev, detail ->
+                                recorder.writeWebRow(runner.index, ev, detail)
+                            }
                         }
 
                         Screen.SUMMARY -> RunSummaryScreen(
@@ -189,12 +219,21 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun deviceLine(): String {
+        val m = resources.displayMetrics
+        return "${android.os.Build.MODEL} · ${m.widthPixels}x${m.heightPixels} · " +
+               "${m.densityDpi} dpi · Android ${android.os.Build.VERSION.RELEASE}"
+    }
+
     private fun begin(play: Play, joinedLateMs: Int) {
         scenesTotal = play.trials.size
         uploadState = ""
         recorder.start()
         motion.start(recorder)
-        beacon.start(config.advertiseName)
+        // Only the tablet designated as the beacon advertises. Both advertising
+        // under one name would put two devices behind a single label in the
+        // watch's log, with no way to separate them afterwards.
+        if (config.advertise) beacon.start(config.advertiseName)
         val m = resources.displayMetrics
         recorder.writeSessionFiles(play, SessionMeta(
             experimentId = config.experimentId, experimentName = config.experimentName,
@@ -202,6 +241,7 @@ class MainActivity : ComponentActivity() {
             studyName = config.studyName, watchWrist = config.watchWrist,
             interactingHand = config.interactingHand, posture = config.posture,
             tabletOrientation = config.tabletOrientation, tabletRole = config.tabletRole,
+            advertised = config.advertise,
             serverClockOffsetMs = server.clockOffsetMs,
             serverClockMeasured = server.clockKnown, joinedLateMs = joinedLateMs,
             playJson = "{}", screenWidthPx = m.widthPixels,

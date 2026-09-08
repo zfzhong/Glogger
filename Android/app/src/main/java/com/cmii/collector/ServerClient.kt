@@ -65,6 +65,32 @@ class ServerClient(private val cacheDir: java.io.File) {
         }
     }
 
+    /**
+     * Announce this tablet, and learn what the server calls it.
+     *
+     * Cheap and idempotent, so it runs on every list refresh: a tablet that has
+     * just been named on the web picks that up without anyone restarting it.
+     */
+    suspend fun register(
+        base: String, deviceId: String, model: String, os: String, screen: String
+    ): Pair<String, String>? = withContext(Dispatchers.IO) {
+        try {
+            val form = okhttp3.FormBody.Builder()
+                .add("device_id", deviceId).add("platform", "android")
+                .add("model", model).add("os_version", os).add("screen", screen)
+                .build()
+            val req = Request.Builder().url(root(base) + "/cmii/device/register/")
+                .post(form).build()
+            http.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext null
+                val body = resp.body?.string().orEmpty()
+                fun field(k: String) =
+                    Regex("\"$k\"\\s*:\\s*\"([^\"]*)\"").find(body)?.groupValues?.get(1).orEmpty()
+                field("name") to field("advertiseName")
+            }
+        } catch (_: Exception) { null }
+    }
+
     suspend fun loadExperiments(base: String): Pair<List<ExperimentInfo>, String> =
         withContext(Dispatchers.IO) {
             syncClock(base)

@@ -29,7 +29,60 @@ import androidx.compose.ui.unit.sp
  * gesture differently.
  */
 @Composable
-fun StudyScreen(runner: TrialRunner, waitingText: String) {
+fun StudyScreen(
+    runner: TrialRunner,
+    waitingText: String,
+    onWebEvent: (String, String) -> Unit = { _, _ -> }
+) {
+    // A web scene takes the whole screen apart from a thin operator strip.
+    val web = runner.current?.takeIf {
+        it.isWeb && runner.phase in listOf(TrialRunner.Phase.READY, TrialRunner.Phase.CUED,
+                                           TrialRunner.Phase.SETTLING)
+    }
+    if (web != null) { WebBody(runner, web, onWebEvent); return }
+    Board(runner, waitingText)
+}
+
+@Composable
+private fun WebBody(runner: TrialRunner, t: Trial, onWebEvent: (String, String) -> Unit) {
+    // Reset whenever the scene changes, so a second web scene starts on its own
+    // menu rather than wherever the last one was left.
+    var picked by remember(t.i) { mutableStateOf<WebSite?>(null) }
+    val live = picked?.link ?: t.webUrl.takeIf { t.siteList.isEmpty() }
+
+    Column(Modifier.fillMaxSize()) {
+        Surface(tonalElevation = 3.dp) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                if (t.siteList.isNotEmpty() && picked != null)
+                    TextButton(onClick = { picked = null; onWebEvent("menu", "") }) {
+                        Text("Games")
+                    }
+                Text("Scene ${minOf(runner.index + 1, runner.total)} of ${runner.total}",
+                     style = MaterialTheme.typography.bodySmall)
+                Text(picked?.label ?: t.promptText,
+                     style = MaterialTheme.typography.bodySmall,
+                     maxLines = 1,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.weight(1f))
+                LinearProgressIndicator(
+                    progress = { if (runner.total > 0) runner.nDone / runner.total.toFloat() else 0f },
+                    modifier = Modifier.width(150.dp))
+            }
+        }
+        if (live != null) {
+            key(t.i, live) {
+                WebScene(live, onWebEvent, Modifier.fillMaxSize())
+            }
+        } else {
+            SiteMenu(t.promptText, t.siteList) { picked = it; onWebEvent("pick", it.url) }
+        }
+    }
+}
+
+@Composable
+private fun Board(runner: TrialRunner, waitingText: String) {
     val t = runner.displayTrial
     val play = runner.play
     val rows = t?.rows ?: play?.rows ?: 2

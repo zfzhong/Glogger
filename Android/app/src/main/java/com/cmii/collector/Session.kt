@@ -23,6 +23,7 @@ data class SessionMeta(
     val posture: String = "",
     val tabletOrientation: String = "",
     val tabletRole: String = "A",
+    val advertised: Boolean = false,
     val serverClockOffsetMs: Long = 0,
     val serverClockMeasured: Boolean = false,
     val joinedLateMs: Int = 0,
@@ -52,6 +53,9 @@ data class SessionMeta(
         o.put("tablet_orientation", tabletOrientation)
         o.put("tablet_role", tabletRole)
         o.put("advertise_name", advertiseName)
+        // Whether this tablet was the beacon. Analysis needs it: a session with no
+        // BLE from a silent Tablet A is correct, and from Tablet B is a failure.
+        o.put("advertised", advertised)
         // Analysis needs this to put tablet rows and watch rows on one timeline,
         // and it moves in steps of seconds, so it is per session not per install.
         o.put("server_clock_offset_ms", serverClockOffsetMs)
@@ -82,10 +86,54 @@ class Config(context: Context) {
         get() = p.getString("advertiseName", "CMII-Pad")!!
         set(v) = p.edit().putString("advertiseName", v).apply()
 
+    /**
+     * Whether this tablet is the beacon.
+     *
+     * By design only Tablet B advertises. Tablet A is the decoy: tapping it looks
+     * identical at the wrist - same reach, same impulse, same IMU signature - and
+     * the ONLY thing separating "tapped B" from "tapped A" is that the wrist
+     * stayed far from the beacon. A silent Tablet A is therefore not an omission,
+     * it is the measurement. If A advertised too, the contrast the study rests on
+     * would be gone and nothing downstream would notice.
+     *
+     * Follows the role unless the operator overrides it deliberately.
+     */
+    var advertise: Boolean
+        get() = p.getBoolean("advertise", tabletRole == "B")
+        set(v) = p.edit().putBoolean("advertise", v).apply()
+
+    /** True when the beacon setting contradicts the bench design. */
+    val advertiseUnexpected: Boolean
+        get() = (tabletRole == "B" && !advertise) || (tabletRole == "A" && advertise)
+
+    /** Applied when the role changes, so the common case needs no thought. */
+    fun followRole() { advertise = (tabletRole == "B") }
+
     /** Which tablet this is in a two-tablet play. */
     var tabletRole: String
         get() = p.getString("tabletRole", "A")!!
         set(v) = p.edit().putString("tabletRole", v).apply()
+
+    /**
+     * This tablet's identity, generated once and kept.
+     *
+     * Self-generated rather than taken from ANDROID_ID or the serial: those are
+     * either unavailable without privileged permissions or change under the app's
+     * feet, and an identity that silently changes turns an assigned tablet into
+     * an unassigned one with no visible cause.
+     */
+    val deviceId: String
+        get() {
+            p.getString("deviceId", null)?.let { return it }
+            val fresh = java.util.UUID.randomUUID().toString()
+            p.edit().putString("deviceId", fresh).apply()
+            return fresh
+        }
+
+    /** What the server calls this tablet, once an admin has named it. */
+    var deviceName: String
+        get() = p.getString("deviceName", "")!!
+        set(v) = p.edit().putString("deviceName", v).apply()
 
     var studyName: String
         get() = p.getString("studyName", "elicitation")!!

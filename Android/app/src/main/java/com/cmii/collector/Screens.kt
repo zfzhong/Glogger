@@ -47,6 +47,7 @@ fun ExperimentListScreen(
     busy: Boolean,
     failure: String,
     onRefresh: () -> Unit,
+    onConfigure: () -> Unit,
     onStart: (ExperimentInfo) -> Unit,
     loadingId: Int?
 ) {
@@ -61,6 +62,7 @@ fun ExperimentListScreen(
                 Spacer(Modifier.weight(1f))
                 if (busy) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
                 else TextButton(onClick = onRefresh) { Text("Refresh") }
+                TextButton(onClick = onConfigure) { Text("Configure") }
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(18.dp),
@@ -68,18 +70,26 @@ fun ExperimentListScreen(
                 // Which tablet this is. Both download the same play and follow the
                 // same timeline; the role decides whose scenes are whose.
                 var role by remember { mutableStateOf(config.tabletRole) }
+                // The picker is the fallback. When an experiment names its
+                // tablets, the assignment decides the role and this is ignored.
                 SingleChoiceSegmentedButtonRow {
                     listOf("A", "B").forEachIndexed { i, r ->
                         SegmentedButton(
                             selected = role == r,
-                            onClick = { role = r; config.tabletRole = r },
+                            onClick = { role = r; config.tabletRole = r; config.followRole() },
                             shape = SegmentedButtonDefaults.itemShape(i, 2)
                         ) { Text("Tablet $r") }
                     }
                 }
-                Text(config.advertiseName, fontFamily = FontFamily.Monospace,
+                Text(config.deviceName.ifBlank { "unnamed tablet" },
                      style = MaterialTheme.typography.bodyMedium,
-                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+                     color = if (config.deviceName.isBlank()) warn()
+                             else MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (config.advertise) config.advertiseName else "silent — decoy tablet",
+                     fontFamily = FontFamily.Monospace,
+                     style = MaterialTheme.typography.bodyMedium,
+                     color = if (config.advertiseUnexpected) warn()
+                             else MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -107,7 +117,7 @@ fun ExperimentListScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 items(experiments, key = { it.id }) { e ->
-                    ExperimentRow(e, server, tick, loadingId) { onStart(e) }
+                    ExperimentRow(e, server, config.deviceId, tick, loadingId) { onStart(e) }
                 }
             }
         }
@@ -118,6 +128,7 @@ fun ExperimentListScreen(
 private fun ExperimentRow(
     e: ExperimentInfo,
     server: ServerClient,
+    deviceId: String,
     @Suppress("UNUSED_PARAMETER") tick: Long,
     loadingId: Int?,
     onStart: () -> Unit
@@ -126,7 +137,14 @@ private fun ExperimentRow(
     // and the only thing keeping the pair in step. A one-tablet play has nothing
     // to stay in step with, so a time is optional there - and still honoured.
     val startAt = e.startAtMs
-    val canStart = e.hasPlay && (startAt?.let { server.serverNowMs() >= it } ?: (e.tablets == 1))
+    // An assigned experiment names its tablets. This one may not be either of
+    // them - the operator has picked up the wrong tablet, or it was never
+    // assigned - and running it anyway would file the session under a role it
+    // does not have.
+    val role = e.roleFor(deviceId)
+    val assignedElsewhere = e.hasAssignment && role == null
+    val canStart = e.hasPlay && !assignedElsewhere &&
+        (startAt?.let { server.serverNowMs() >= it } ?: (e.tablets == 1))
 
     Surface(
         shape = RoundedCornerShape(12.dp),
@@ -154,6 +172,11 @@ private fun ExperimentRow(
                              color = warn())
                     }
                 }
+                if (e.hasAssignment)
+                    Text(if (role != null) "this tablet plays $role · ${e.assignedTo}"
+                         else "assigned to ${e.assignedTo}",
+                         style = MaterialTheme.typography.bodySmall,
+                         color = if (role != null) good() else warn())
                 if (e.missing.isNotEmpty())
                     Text("not described on the server: " + e.missing.joinToString(", "),
                          style = MaterialTheme.typography.bodySmall, color = warn())
