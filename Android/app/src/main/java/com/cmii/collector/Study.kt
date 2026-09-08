@@ -122,7 +122,7 @@ data class Play(
     val playId: Int? = null
 ) {
     val count: Int get() = trials.size
-    val waiting: String get() = waitingText?.takeIf { it.isNotBlank() } ?: "waiting…"
+    val waiting: String get() = waitingText?.takeIf { it.isNotBlank() } ?: "Interact with the other tablet"
 }
 
 @Serializable

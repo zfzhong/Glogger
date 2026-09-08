@@ -157,7 +157,7 @@ class MainActivity : ComponentActivity() {
                         Screen.RUNNING -> Column(Modifier.fillMaxSize()) {
                             RunBar()
                             HorizontalDivider()
-                            StudyScreen(runner, runner.play?.waiting ?: "waiting…") { ev, detail ->
+                            StudyScreen(runner, runner.play?.waiting ?: "Interact with the other tablet") { ev, detail ->
                                 recorder.writeWebRow(runner.index, ev, detail)
                             }
                         }

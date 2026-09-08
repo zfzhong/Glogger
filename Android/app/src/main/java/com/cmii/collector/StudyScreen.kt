@@ -204,7 +204,13 @@ private fun CardBoard(runner: TrialRunner, waitingText: String) {
             when {
                 quiet?.isOffscreen == true -> Panel(quiet.promptText, big = true)
                 quiet?.isWaiting == true ->
-                    Panel(quiet.promptText.ifBlank { waitingText }, big = false)
+                    // The counter is repeated inside the panel, not just left in
+                    // the header: an empty slot IS a scene, and the panel is the
+                    // only thing being read while it runs. Without it the run
+                    // looks stalled rather than under way.
+                    Panel(quiet.promptText.ifBlank { waitingText }, big = false,
+                          caption = "Scene ${minOf(runner.index + 1, runner.total)} " +
+                                    "of ${runner.total}")
             }
         }
     }
@@ -399,16 +405,24 @@ private fun Cell(
 
 /** The panel shown over a dimmed board: a water break, or the other tablet's turn. */
 @Composable
-private fun Panel(text: String, big: Boolean) {
+private fun Panel(text: String, big: Boolean, caption: String? = null) {
     Surface(shape = RoundedCornerShape(if (big) 28.dp else 24.dp), tonalElevation = 6.dp) {
-        Text(
-            text,
-            fontSize = if (big) 40.sp else 44.sp,
-            fontWeight = if (big) FontWeight.SemiBold else FontWeight.Light,
-            textAlign = TextAlign.Center,
-            color = if (big) MaterialTheme.colorScheme.onSurface
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 52.dp, vertical = 32.dp).widthIn(max = 760.dp)
-        )
+        Column(
+            Modifier.padding(horizontal = 52.dp, vertical = 32.dp).widthIn(max = 760.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            if (caption != null)
+                Text(caption, style = MaterialTheme.typography.titleMedium,
+                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                text,
+                fontSize = if (big) 40.sp else 44.sp,
+                fontWeight = if (big) FontWeight.SemiBold else FontWeight.Light,
+                textAlign = TextAlign.Center,
+                color = if (big) MaterialTheme.colorScheme.onSurface
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }

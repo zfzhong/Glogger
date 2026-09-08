@@ -78,12 +78,22 @@ struct StudyView: View {
     /// do here, and anything that looked interactive would pull the participant's
     /// attention to the wrong screen.
     @ViewBuilder private func waitingPrompt(_ t: Trial) -> some View {
-        Text(t.promptText.isEmpty ? "waiting…" : t.promptText)
-            .font(.system(size: 44, weight: .light, design: .rounded))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 52).padding(.vertical, 30)
-            .background(RoundedRectangle(cornerRadius: 24).fill(.quaternary))
-            .transition(.opacity)
+        VStack(spacing: 14) {
+            // The counter is repeated here, not just left in the header: an empty
+            // slot IS a scene, and this panel is the only thing being read while
+            // it runs. Without it the run looks stalled rather than under way.
+            Text("Scene \(min(runner.index + 1, runner.total)) of \(runner.total)")
+                .font(.title3.weight(.medium))
+                .foregroundStyle(.secondary)
+            Text(t.promptText.isEmpty ? "Interact with the other tablet" : t.promptText)
+                .font(.system(size: 44, weight: .light, design: .rounded))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.horizontal, 52).padding(.vertical, 30)
+        .frame(maxWidth: 760)
+        .background(RoundedRectangle(cornerRadius: 24).fill(.quaternary))
+        .transition(.opacity)
     }
 
     /// A web scene takes the whole screen apart from a thin operator strip. The
@@ -176,7 +186,7 @@ struct StudyView: View {
             HStack {
                 Text(runner.phase == .idle ? "Not started"
                      : runner.phase == .done ? "Finished"
-                     : "Trial \(min(runner.index + 1, runner.total)) of \(runner.total)")
+                     : "Scene \(min(runner.index + 1, runner.total)) of \(runner.total)")
                     .font(.title3.weight(.medium))
                     .foregroundStyle(.secondary)
                 Spacer()
