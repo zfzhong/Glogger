@@ -40,6 +40,8 @@ struct ExperimentInfo: Codable, Identifiable, Hashable {
     var tabletBLabel: String? = nil
     var advertiseA: String? = nil
     var advertiseB: String? = nil
+    /// "B", "A" or "both" - which tablet the watch scans for in this experiment.
+    var beacon: String? = nil
 
     var hasPlay: Bool { (playId ?? 0) > 0 && trialCount > 0 }
     var hasAssignment: Bool { tabletA != nil || tabletB != nil }
@@ -56,6 +58,34 @@ struct ExperimentInfo: Codable, Identifiable, Hashable {
         if deviceId == tabletA { return advertiseA }
         if deviceId == tabletB { return advertiseB }
         return nil
+    }
+
+    /// Whether THIS tablet is a beacon here.
+    ///
+    /// A single-tablet run always advertises: there is no decoy to contrast
+    /// against, and a silent lone tablet leaves the watch with nothing.
+    func advertises(for deviceId: String) -> Bool {
+        if tabletsValue <= 1 { return true }
+        guard let mine = role(for: deviceId) else { return false }
+        let b = beacon ?? "B"
+        return b == "both" || b == mine
+    }
+
+    /// What this tablet is for THIS experiment, or nil if it cannot run it.
+    ///
+    /// Assigned: the server decides. Unassigned single-tablet: there is no decoy,
+    /// so the one tablet is the beacon. Unassigned two-tablet: refused - neither
+    /// tablet can know which half it is, and guessing would either silence the
+    /// beacon or duplicate it.
+    func resolvedRole(for deviceId: String) -> String? {
+        // A and B only mean anything when there are two. With one tablet there is
+        // no decoy to contrast against, so it is the beacon whichever slot it was
+        // assigned to - otherwise a single-tablet run assigned to slot A would go
+        // silent and the watch would record nothing at all.
+        // An experiment with no device assigned is not ready, whatever else is
+        // set on it, so no tablet offers it.
+        guard let mine = role(for: deviceId) else { return nil }
+        return tabletsValue <= 1 ? "B" : mine
     }
 
     var assignedTo: String {

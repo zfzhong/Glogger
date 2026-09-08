@@ -69,27 +69,15 @@ fun ExperimentListScreen(
                 verticalAlignment = Alignment.CenterVertically) {
                 // Which tablet this is. Both download the same play and follow the
                 // same timeline; the role decides whose scenes are whose.
-                var role by remember { mutableStateOf(config.tabletRole) }
-                // The picker is the fallback. When an experiment names its
-                // tablets, the assignment decides the role and this is ignored.
-                SingleChoiceSegmentedButtonRow {
-                    listOf("A", "B").forEachIndexed { i, r ->
-                        SegmentedButton(
-                            selected = role == r,
-                            onClick = { role = r; config.tabletRole = r; config.followRole() },
-                            shape = SegmentedButtonDefaults.itemShape(i, 2)
-                        ) { Text("Tablet $r") }
-                    }
-                }
+                // No role picker: the server assigns tablets, and a control that
+                // could contradict it is just a way to be wrong.
                 Text(config.deviceName.ifBlank { "unnamed tablet" },
-                     style = MaterialTheme.typography.bodyMedium,
+                     style = MaterialTheme.typography.titleMedium,
                      color = if (config.deviceName.isBlank()) warn()
-                             else MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(if (config.advertise) config.advertiseName else "silent — decoy tablet",
-                     fontFamily = FontFamily.Monospace,
+                             else MaterialTheme.colorScheme.onSurface)
+                Text(config.advertiseName, fontFamily = FontFamily.Monospace,
                      style = MaterialTheme.typography.bodyMedium,
-                     color = if (config.advertiseUnexpected) warn()
-                             else MaterialTheme.colorScheme.onSurfaceVariant)
+                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -104,14 +92,11 @@ fun ExperimentListScreen(
         }
         HorizontalDivider()
 
-        // Only what this tablet can actually run. An experiment assigned to the
-        // other tablet is noise at the bench - but one with NO assignment stays,
-        // because a freshly created experiment would otherwise vanish from every
-        // tablet at once and look broken.
+        // Only what this tablet can actually run: assigned to it, by name. An
+        // experiment with no device assigned is not ready, and one assigned to the
+        // other tablet is not this tablet's - both are noise at the bench.
         val deviceId = config.deviceId
-        val mine = experiments.filter {
-            !it.hasAssignment || it.roleFor(deviceId) != null
-        }
+        val mine = experiments.filter { it.resolvedRole(deviceId) != null }
         val hidden = experiments.size - mine.size
 
         if (mine.isEmpty()) {
@@ -123,7 +108,7 @@ fun ExperimentListScreen(
                          style = MaterialTheme.typography.titleMedium,
                          color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (hidden > 0 && !busy)
-                        Text("$hidden assigned to another tablet",
+                        Text("$hidden not assigned to this tablet",
                              style = MaterialTheme.typography.bodySmall,
                              color = MaterialTheme.colorScheme.outline)
                 }
@@ -141,7 +126,7 @@ fun ExperimentListScreen(
                     // Never silently: an experiment that is simply misassigned
                     // would otherwise look like it was never created.
                     Text("$hidden experiment${if (hidden == 1) "" else "s"} " +
-                         "assigned to another tablet, hidden",
+                         "hidden — assigned elsewhere, or no tablet assigned yet",
                          style = MaterialTheme.typography.bodySmall,
                          color = MaterialTheme.colorScheme.outline,
                          modifier = Modifier.padding(top = 6.dp))
@@ -168,9 +153,8 @@ private fun ExperimentRow(
     // them - the operator has picked up the wrong tablet, or it was never
     // assigned - and running it anyway would file the session under a role it
     // does not have.
-    val role = e.roleFor(deviceId)
-    val assignedElsewhere = e.hasAssignment && role == null
-    val canStart = e.hasPlay && !assignedElsewhere &&
+    val role = e.resolvedRole(deviceId)
+    val canStart = e.hasPlay && role != null &&
         (startAt?.let { server.serverNowMs() >= it } ?: (e.tablets == 1))
 
     Surface(
@@ -199,11 +183,13 @@ private fun ExperimentRow(
                              color = warn())
                     }
                 }
-                if (e.hasAssignment)
-                    Text(if (role != null) "this tablet plays $role · ${e.assignedTo}"
-                         else "assigned to ${e.assignedTo}",
-                         style = MaterialTheme.typography.bodySmall,
-                         color = if (role != null) good() else warn())
+                if (role != null) {
+                    val beacons = e.advertisesFor(deviceId)
+                    Text(if (e.tablets > 1)
+                             "plays $role · " + (if (beacons) "beacon" else "decoy, silent")
+                         else "beacon",
+                         style = MaterialTheme.typography.bodySmall, color = good())
+                }
                 if (e.missing.isNotEmpty())
                     Text("not described on the server: " + e.missing.joinToString(", "),
                          style = MaterialTheme.typography.bodySmall, color = warn())

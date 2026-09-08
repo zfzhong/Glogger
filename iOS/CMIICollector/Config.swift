@@ -99,10 +99,10 @@ final class Config: ObservableObject {
         didSet { put("tabletRole", tabletRole) }
     }
 
-    /// True when the beacon setting contradicts the bench design.
-    func advertiseUnexpected(_ advertising: Bool) -> Bool {
-        (tabletRole == "B" && !advertising) || (tabletRole == "A" && advertising)
-    }
+    /// Whether this tablet advertises for the run about to start. Set from the
+    /// experiment when it is chosen, because which tablet carries the beacon is
+    /// a property of the bench rather than of this tablet's letter.
+    @Published var advertise: Bool = true
 
     // MARK: Session metadata - required before analysis (spec §7)
     @Published var participant: String { didSet { put("participant", participant) } }

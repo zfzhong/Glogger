@@ -60,16 +60,8 @@ struct ExperimentListView: View {
             }
 
             HStack(spacing: 18) {
-                // Which tablet this is. Both tablets download the same play and
-                // run the same timeline; the role decides which scenes are this
-                // tablet's and which it sits out showing an inert board.
-                Picker("This tablet", selection: $config.tabletRole) {
-                    Text("Tablet A").tag("A")
-                    Text("Tablet B").tag("B")
-                }
-                .pickerStyle(.segmented)
-                .frame(width: 240)
-
+                // No role picker: the server assigns tablets, and a control that
+                // could contradict it is only a way to be wrong.
                 Text(config.deviceName.isEmpty ? "unnamed tablet" : config.deviceName)
                     .font(.callout)
                     .foregroundStyle(config.deviceName.isEmpty ? AnyShapeStyle(.orange)
@@ -116,7 +108,7 @@ struct ExperimentListView: View {
                  : hiddenCount > 0 ? "Nothing assigned to this tablet" : "No experiments")
                 .font(.title3).foregroundStyle(.secondary)
             if hiddenCount > 0 && !server.busy {
-                Text("\(hiddenCount) assigned to another tablet")
+                Text("\(hiddenCount) not assigned to this tablet")
                     .font(.callout).foregroundStyle(.tertiary)
             }
             if !server.busy {
@@ -130,14 +122,11 @@ struct ExperimentListView: View {
 
     // MARK: List
 
-    /// Only what this tablet can actually run. An experiment assigned to the
-    /// other tablet is noise at the bench - but one with NO assignment stays,
-    /// because a freshly created experiment would otherwise vanish from every
-    /// tablet at once and look broken.
+    /// Only what this tablet can actually run: assigned to it, by name. An
+    /// experiment with no device assigned is not ready, and one assigned to the
+    /// other tablet is not this tablet's - both are noise at the bench.
     private var visible: [ExperimentInfo] {
-        server.experiments.filter {
-            !$0.hasAssignment || $0.role(for: config.deviceId) != nil
-        }
+        server.experiments.filter { $0.resolvedRole(for: config.deviceId) != nil }
     }
 
     private var hiddenCount: Int { server.experiments.count - visible.count }
@@ -149,7 +138,7 @@ struct ExperimentListView: View {
                 if hiddenCount > 0 {
                     // Never silently: an experiment that is simply misassigned
                     // would otherwise look like it was never created.
-                    Text("\(hiddenCount) experiment\(hiddenCount == 1 ? "" : "s") assigned to another tablet, hidden")
+                    Text("\(hiddenCount) hidden — assigned elsewhere, or no tablet assigned yet")
                         .font(.caption).foregroundStyle(.tertiary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.top, 4)
@@ -186,13 +175,13 @@ struct ExperimentListView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
-                if e.hasAssignment {
-                    let mine = e.role(for: config.deviceId)
-                    Label(mine != nil ? "this tablet plays \(mine!) · \(e.assignedTo)"
-                                      : "assigned to \(e.assignedTo)",
-                          systemImage: mine != nil ? "checkmark.circle" : "iphone.slash")
-                        .font(.caption)
-                        .foregroundStyle(mine != nil ? AnyShapeStyle(.green) : AnyShapeStyle(.orange))
+                if let mine = e.resolvedRole(for: config.deviceId) {
+                    let beacons = e.advertises(for: config.deviceId)
+                    Label(e.tabletsValue > 1
+                          ? "plays \(mine) · " + (beacons ? "beacon" : "decoy, silent")
+                          : "beacon",
+                          systemImage: "checkmark.circle")
+                        .font(.caption).foregroundStyle(.green)
                 }
 
                 if let missing = e.missing, !missing.isEmpty {
@@ -279,7 +268,7 @@ struct ExperimentListView: View {
         // An assigned experiment names its tablets. This one may not be either -
         // the operator picked up the wrong tablet, or it was never assigned - and
         // running it would file the session under a role it does not have.
-        if e.hasAssignment && e.role(for: config.deviceId) == nil { return false }
+        guard e.resolvedRole(for: config.deviceId) != nil else { return false }
         guard let d = e.startDate else { return e.tabletsValue == 1 }
         return server.serverNow() >= d
     }
@@ -314,11 +303,10 @@ struct ExperimentListView: View {
         config.adopt(e)
         // The assignment wins over the local picker, so two tablets can no longer
         // contradict each other about which half they are playing.
-        if let mine = e.role(for: config.deviceId) {
-            config.tabletRole = mine
-            if let adv = e.advertiseName(for: config.deviceId), !adv.isEmpty {
-                config.advertiseName = adv
-            }
+        config.tabletRole = e.resolvedRole(for: config.deviceId) ?? "B"
+        config.advertise = e.advertises(for: config.deviceId)
+        if let adv = e.advertiseName(for: config.deviceId), !adv.isEmpty {
+            config.advertiseName = adv
         }
         // How far into the play's own timeline this tablet is arriving. The other
         // tablet computes the same number from the same instant, so both land on

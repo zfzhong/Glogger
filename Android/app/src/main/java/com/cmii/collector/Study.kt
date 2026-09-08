@@ -152,8 +152,22 @@ data class ExperimentInfo(
     val tabletALabel: String? = null,
     val tabletBLabel: String? = null,
     val advertiseA: String? = null,
-    val advertiseB: String? = null
+    val advertiseB: String? = null,
+    /** "B", "A" or "both" — which tablet the watch scans for in this experiment. */
+    val beacon: String = "B"
 ) {
+    /**
+     * Whether THIS tablet is a beacon here.
+     *
+     * A single-tablet run always advertises: there is no decoy to contrast
+     * against, and a silent lone tablet leaves the watch with nothing.
+     */
+    fun advertisesFor(deviceId: String): Boolean {
+        if (tablets <= 1) return true
+        val mine = roleFor(deviceId) ?: return false
+        return beacon == "both" || beacon == mine
+    }
+
     val hasAssignment: Boolean get() = tabletA != null || tabletB != null
 
     /** This device's half, or null when it is not one of the assigned tablets. */
@@ -168,6 +182,25 @@ data class ExperimentInfo(
         tabletA -> advertiseA
         tabletB -> advertiseB
         else -> null
+    }
+
+    /**
+     * What this tablet is for THIS experiment, or null if it cannot run it.
+     *
+     * Assigned: the server decides. Unassigned single-tablet: there is no decoy,
+     * so the one tablet is the beacon. Unassigned two-tablet: refused - neither
+     * tablet can know which half it is, and guessing would either silence the
+     * beacon or duplicate it.
+     */
+    fun resolvedRole(deviceId: String): String? {
+        // An experiment with no device assigned is not ready, whatever else is
+        // set on it, so no tablet offers it.
+        val mine = roleFor(deviceId) ?: return null
+        // A and B only mean anything when there are two. With one tablet there is
+        // no decoy to contrast against, so it is the beacon whichever slot it was
+        // assigned to - otherwise a single-tablet run assigned to slot A would go
+        // silent and the watch would record nothing at all.
+        return if (tablets <= 1) "B" else mine
     }
 
     val assignedTo: String

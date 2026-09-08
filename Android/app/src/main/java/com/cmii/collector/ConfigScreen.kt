@@ -33,18 +33,12 @@ fun ConfigScreen(
 ) {
     var server by remember { mutableStateOf(config.serverBase) }
     var token by remember { mutableStateOf(config.uploadToken) }
-    var advName by remember { mutableStateOf(config.advertiseName) }
-    var advertise by remember { mutableStateOf(config.advertise) }
     var study by remember { mutableStateOf(config.studyName) }
-    var role by remember { mutableStateOf(config.tabletRole) }
 
     fun save() {
         config.serverBase = server.trim()
         config.uploadToken = token.trim()
-        config.advertiseName = advName.trim().ifEmpty { "CMII-Pad" }
-        config.advertise = advertise
         config.studyName = study.trim()
-        config.tabletRole = role
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -75,52 +69,28 @@ fun ConfigScreen(
             }
 
             Section("This tablet") {
-                SingleChoiceSegmentedButtonRow {
-                    listOf("A", "B").forEachIndexed { i, r ->
-                        SegmentedButton(
-                            selected = role == r,
-                            onClick = {
-                                role = r
-                                // Only B is the beacon; A is the decoy whose taps
-                                // must look far from it.
-                                advertise = (r == "B")
-                            },
-                            shape = SegmentedButtonDefaults.itemShape(i, 2)
-                        ) { Text("Tablet $r") }
-                    }
-                }
-                Hint("Which half of a two-tablet play this tablet runs. Both " +
-                     "download the same play; the role decides whose scenes are whose.")
+                ReadOnly("Name", config.deviceName)
+                ReadOnly("Last role", config.tabletRole)
+                Hint("The role comes from the experiment, on the server: it names " +
+                     "which device plays which half. There is nothing to choose " +
+                     "here, because a setting that could contradict the server is " +
+                     "only a way to be wrong.")
                 Text(deviceLine, fontFamily = FontFamily.Monospace,
                      style = MaterialTheme.typography.bodySmall,
                      color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             Section("Beacon") {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Switch(checked = advertise, onCheckedChange = { advertise = it })
-                    Spacer(Modifier.width(12.dp))
-                    Text(if (advertise) "This tablet advertises" else "Not advertising")
-                }
-                OutlinedTextField(
-                    value = advName, onValueChange = { advName = it },
-                    label = { Text("advertise name") }, singleLine = true,
-                    enabled = advertise, modifier = Modifier.fillMaxWidth())
+                ReadOnly("Advertise name", config.advertiseName)
                 Hint("The watch scans for this EXACT name — Slogger's filter is an " +
                      "exact match, so CMII-Pad-1 will not match CMII-Pad.")
                 // Two tablets advertising the same name is indistinguishable at the
                 // watch: every sample would be attributed to whichever it matched.
-                Hint("Tablet B is the beacon; Tablet A stays silent. Tapping A looks " +
-                     "identical at the wrist, and the only thing separating it from " +
-                     "tapping B is that the wrist stayed far from the beacon — so a " +
-                     "silent Tablet A is the measurement, not an omission.")
-                if ((role == "B" && !advertise) || (role == "A" && advertise))
-                    Hint(if (role == "A")
-                             "Tablet A is set to advertise. Two beacons would erase the " +
-                             "contrast between tapping A and tapping B."
-                         else
-                             "Tablet B is not advertising. The watch will see no beacon " +
-                             "at all this session.", warn = true)
+                Hint("Set on the device register, on the server. Tablet B is the " +
+                     "beacon; Tablet A stays silent — tapping A looks identical at " +
+                     "the wrist, and the only thing separating it from tapping B is " +
+                     "that the wrist stayed far from the beacon, so a silent Tablet A " +
+                     "is the measurement rather than an omission.")
                 beacon.readiness()?.let {
                     Text("Beacon cannot start: $it", color = Color(0xFFB26A00),
                          style = MaterialTheme.typography.bodyMedium)

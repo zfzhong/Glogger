@@ -131,13 +131,17 @@ class MainActivity : ComponentActivity() {
                                     // The assignment wins over the local picker:
                                     // two tablets can no longer contradict each
                                     // other about which half they are playing.
-                                    e.roleFor(config.deviceId)?.let { r ->
-                                        config.tabletRole = r
-                                        config.followRole()
-                                        e.advertiseFor(config.deviceId)
-                                            ?.takeIf { it.isNotBlank() }
-                                            ?.let { config.advertiseName = it }
-                                    }
+                                    // The server decides the role; an unassigned
+                                    // single-tablet run has no decoy, so this tablet
+                                    // is the beacon.
+                                    val r = e.resolvedRole(config.deviceId) ?: "B"
+                                    config.tabletRole = r
+                                    // The experiment says which tablet is the
+                                    // beacon; the letter no longer decides it.
+                                    config.advertise = e.advertisesFor(config.deviceId)
+                                    e.advertiseFor(config.deviceId)
+                                        ?.takeIf { it.isNotBlank() }
+                                        ?.let { config.advertiseName = it }
                                     val late = e.startAtMs?.let {
                                         maxOf(0L, server.serverNowMs() - it).toInt()
                                     } ?: 0
