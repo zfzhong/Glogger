@@ -82,10 +82,11 @@ struct StudyView: View {
             // The counter is repeated here, not just left in the header: an empty
             // slot IS a scene, and this panel is the only thing being read while
             // it runs. Without it the run looks stalled rather than under way.
-            Text("Scene \(min(runner.index + 1, runner.total)) of \(runner.total)")
-                .font(.title3.weight(.medium))
+            Text("Scene \(min(runner.index + 1, runner.total)) of \(runner.total)"
+                 + "  ·  \((runner.remainingMs + 999) / 1000)s")
+                .font(.title3.weight(.medium).monospacedDigit())
                 .foregroundStyle(.secondary)
-            Text(t.promptText.isEmpty ? "Interact with the other tablet" : t.promptText)
+            Text(t.promptText.isEmpty ? "Please read the other Device" : t.promptText)
                 .font(.system(size: 44, weight: .light, design: .rounded))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -190,10 +191,18 @@ struct StudyView: View {
                     .font(.title3.weight(.medium))
                     .foregroundStyle(.secondary)
                 Spacer()
-                // No verdict on this screen. A participant who is told they got it
-                // wrong performs the next gesture differently; the operator sees the
-                // live classification on the Mac instead.
-                Text("")
+                // Seconds left in the SLOT, not in the cue window. The scene ends
+                // when this reaches zero and not before, so the number and the
+                // scene counter always agree - finishing the gesture early no
+                // longer skips the board forward.
+                //
+                // Still no verdict here. A participant told they got it wrong
+                // performs the next gesture differently.
+                if runner.isRunning {
+                    Text("\((runner.remainingMs + 999) / 1000)s")
+                        .font(.title3.weight(.medium).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
             }
             ProgressView(value: Double(runner.nDone),
                          total: Double(max(runner.total, 1)))

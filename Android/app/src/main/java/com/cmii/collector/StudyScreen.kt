@@ -168,15 +168,27 @@ private fun CardBoard(runner: TrialRunner, waitingText: String) {
 
         // Header
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(
-                when (runner.phase) {
-                    TrialRunner.Phase.IDLE -> "Not started"
-                    TrialRunner.Phase.DONE -> "Finished"
-                    else -> "Scene ${minOf(runner.index + 1, runner.total)} of ${runner.total}"
-                },
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    when (runner.phase) {
+                        TrialRunner.Phase.IDLE -> "Not started"
+                        TrialRunner.Phase.DONE -> "Finished"
+                        else -> "Scene ${minOf(runner.index + 1, runner.total)} of ${runner.total}"
+                    },
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.weight(1f))
+                // Seconds left in the SLOT, not in the cue window. The scene ends
+                // when this reaches zero and not before, so the number and the
+                // scene counter always agree - finishing the gesture early no
+                // longer skips the board forward.
+                if (runner.isRunning)
+                    Text("${(runner.remainingMs + 999) / 1000}s",
+                         style = MaterialTheme.typography.titleMedium,
+                         fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             LinearProgressIndicator(
                 progress = { if (runner.total > 0) runner.nDone / runner.total.toFloat() else 0f },
                 modifier = Modifier.fillMaxWidth()
@@ -210,7 +222,8 @@ private fun CardBoard(runner: TrialRunner, waitingText: String) {
                     // looks stalled rather than under way.
                     Panel(quiet.promptText.ifBlank { waitingText }, big = false,
                           caption = "Scene ${minOf(runner.index + 1, runner.total)} " +
-                                    "of ${runner.total}")
+                                    "of ${runner.total}  ·  " +
+                                    "${(runner.remainingMs + 999) / 1000}s")
             }
         }
     }

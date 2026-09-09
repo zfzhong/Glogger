@@ -211,7 +211,7 @@ class MainActivity : ComponentActivity() {
                         Screen.RUNNING -> Column(Modifier.fillMaxSize()) {
                             RunBar()
                             HorizontalDivider()
-                            StudyScreen(runner, runner.play?.waiting ?: "Interact with the other tablet") { ev, detail ->
+                            StudyScreen(runner, runner.play?.waiting ?: "Please read the other Device") { ev, detail ->
                                 recorder.writeWebRow(runner.index, ev, detail)
                             }
                         }
@@ -313,7 +313,10 @@ class MainActivity : ComponentActivity() {
     private fun beginArmed(play: Play) {
         if (!recorder.isRecording) startRecording(play)
         armedPlay = null
-        runner.start(play, 0)
+        // The scheduled instant, expressed on THIS device's clock. Both tablets
+        // do the same conversion with their own measured offset, so both end up
+        // with the same zero without ever comparing notes.
+        runner.start(play, 0, zeroDeviceMs = armedStartAt - server.clockOffsetMs)
         screen = Screen.RUNNING
     }
 
@@ -358,7 +361,10 @@ class MainActivity : ComponentActivity() {
         scenesTotal = play.trials.size
         uploadState = ""
         startRecording(play, joinedLateMs)
-        runner.start(play, joinedLateMs)
+        // Joining after the instant: the zero is still the schedule, just behind
+        // us. Without a schedule at all it is the button press.
+        runner.start(play, joinedLateMs,
+                     zeroDeviceMs = System.currentTimeMillis() - joinedLateMs)
         screen = Screen.RUNNING
     }
 

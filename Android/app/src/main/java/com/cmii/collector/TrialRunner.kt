@@ -4,6 +4,7 @@ import android.os.Handler
 import android.os.Looper
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 
@@ -32,6 +33,14 @@ class TrialRunner {
      */
     var displayTrial by mutableStateOf<Trial?>(null); private set
 
+    /**
+     * Milliseconds left in the scene now running, for the countdown on screen.
+     *
+     * This is time left in the SLOT, not in the cue window: the scene is over
+     * when its slot is, whether or not the gesture was done in the first second.
+     */
+    var remainingMs by mutableLongStateOf(0L); private set
+
     var play: Play? = null; private set
     val total: Int get() = play?.trials?.size ?: 0
     val isRunning: Boolean get() = phase != Phase.IDLE && phase != Phase.DONE
@@ -49,6 +58,30 @@ class TrialRunner {
     private var droppedOn: Int? = null
 
     /**
+     * The play's own zero, on THIS device's clock.
+     *
+     * Every scene boundary is measured from here rather than from whenever the
+     * previous scene happened to end. Two tablets derive it from the same
+     * scheduled instant, corrected by each one's own measured server offset, so
+     * they agree about when scene 7 begins without ever talking to each other.
+     *
+     * Kept in device time, not server time, because every timestamp written to
+     * the CSVs is device time - a file with two clocks in it cannot be aligned
+     * against the sensor stream.
+     */
+    private var zeroMs = 0L
+
+    /**
+     * A second cancellation token, for the slot boundary alone.
+     *
+     * `generation` is bumped by every phase change, which cancels everything
+     * outstanding - correct for the phase timers, fatal for the one callback
+     * that has to survive them. Without this the end-of-slot callback was
+     * cancelled by the first cue and no scene ever advanced.
+     */
+    private var slotGen = 0
+
+    /**
      * `joinedLateMs` lets a tablet enter a timeline that has already begun.
      *
      * The scheduled start of the experiment is the session's zero, not the moment
@@ -57,10 +90,14 @@ class TrialRunner {
      * Scenes already over are recorded as "not_run" rather than omitted, so the
      * file still accounts for every scene in the play.
      */
-    fun start(p: Play, joinedLateMs: Int = 0) {
+    fun start(p: Play, joinedLateMs: Int = 0, zeroDeviceMs: Long? = null) {
         play = p
         index = 0; nDone = 0; skipped = 0
         collected.clear()
+        // Absent a schedule (a one-tablet play started by hand) the button press
+        // is the zero, and joinedLateMs is 0.
+        zeroMs = zeroDeviceMs ?: (System.currentTimeMillis() - joinedLateMs)
+        slotGen++
         if (joinedLateMs > 0) {
             var cursor = 0
             for ((i, t) in p.trials.withIndex()) {
@@ -74,10 +111,46 @@ class TrialRunner {
         }
         if (index >= p.trials.size) { phase = Phase.DONE; onFinished?.invoke(); return }
         beginReady()
+        tick()
+    }
+
+    /** Where scene `i` begins and ends, on this device's clock. */
+    private fun slotStart(i: Int): Long {
+        val p = play ?: return zeroMs
+        var cursor = 0
+        for ((j, t) in p.trials.withIndex()) {
+            val begins = t.startMs ?: cursor
+            if (j == i) return zeroMs + begins
+            cursor = begins + t.slot(p)
+        }
+        return zeroMs + cursor
+    }
+
+    private fun slotEnd(i: Int): Long {
+        val p = play ?: return zeroMs
+        val t = p.trials.getOrNull(i) ?: return slotStart(i)
+        return slotStart(i) + t.slot(p)
+    }
+
+    /**
+     * Drives the countdown, ten times a second.
+     *
+     * Independent of the phase timers on purpose: if a scheduled callback is
+     * ever late, the number on screen still tells the truth about the slot.
+     */
+    private fun tick() {
+        handler.postDelayed(object : Runnable {
+            override fun run() {
+                if (!isRunning) { remainingMs = 0; return }
+                remainingMs = maxOf(0L, slotEnd(index) - System.currentTimeMillis())
+                handler.postDelayed(this, 100)
+            }
+        }, 0)
     }
 
     fun abort() {
         generation++
+        slotGen++
         handler.removeCallbacksAndMessages(null)
         phase = Phase.IDLE
         current = null
@@ -104,7 +177,9 @@ class TrialRunner {
         if (phase != Phase.CUED || current?.isFreeform == true) return
         generation++
         phase = Phase.SETTLING
-        after(p.settleMs) { finish("completed") }
+        at(minOf(System.currentTimeMillis() + p.settleMs, slotEnd(index))) {
+            finish("completed")
+        }
     }
 
     /**
@@ -137,7 +212,11 @@ class TrialRunner {
         displayTrial = current
         phase = Phase.READY
         generation++
-        after(p.readyMs) { showCue() }
+        // Anchored to the slot, not to "now": a scene that begins a little late
+        // must still end on time, or the lateness accumulates down the play and
+        // the two tablets drift apart scene by scene.
+        at(slotStart(index) + p.readyMs) { showCue() }
+        atSlot(slotEnd(index)) { closeSlot() }
     }
 
     private fun showCue() {
@@ -153,7 +232,9 @@ class TrialRunner {
             current?.isFreeform == true -> "elapsed"
             else -> "timeout"
         }
-        after(window) { finish(ending) }
+        // The cue window is the shorter of what the scene asks for and what is
+        // left of the slot; the slot is what actually ends the scene.
+        at(minOf(System.currentTimeMillis() + window, slotEnd(index))) { finish(ending) }
     }
 
     private fun finish(outcome: String) {
@@ -166,12 +247,32 @@ class TrialRunner {
         onRow?.invoke(row(t, outcome, observed, match))
         nDone++
 
+        // The row is written the moment the scene resolves, so the timing in the
+        // file is the real timing - but the board waits out the rest of the slot
+        // before moving on. Advancing early is what let two tablets wander
+        // seconds apart, and it is also what made the scene number jump before
+        // the countdown reached zero.
         phase = Phase.GAP
-        val gap = t.gapMs ?: p.gapMinMs
-        after(gap) {
-            index++
-            if (index >= p.trials.size) finishStudy() else beginReady()
+    }
+
+    /** The slot is over: this is the only thing that advances the scene. */
+    private fun closeSlot() {
+        val p = play ?: return
+        // A scene whose cue window is still open when the slot ends (a slot
+        // shorter than the window, or a callback that did not fire) is resolved
+        // here rather than being left unrecorded.
+        if (phase == Phase.READY || phase == Phase.CUED || phase == Phase.SETTLING) {
+            val ending = when {
+                current?.isWaiting == true -> "waiting"
+                current?.isFreeform == true -> "elapsed"
+                else -> "timeout"
+            }
+            finish(ending)
         }
+        generation++
+        slotGen++
+        index++
+        if (index >= p.trials.size) finishStudy() else beginReady()
     }
 
     private fun finishStudy() {
@@ -184,6 +285,20 @@ class TrialRunner {
     private fun after(ms: Int, block: () -> Unit) {
         val g = generation
         handler.postDelayed({ if (g == generation) block() }, ms.toLong())
+    }
+
+    /** Run at an absolute instant on this device's clock, or at once if past. */
+    private fun at(whenMs: Long, block: () -> Unit) {
+        val g = generation
+        handler.postDelayed({ if (g == generation) block() },
+                            maxOf(0L, whenMs - System.currentTimeMillis()))
+    }
+
+    /** As `at`, but survives phase changes within the scene. */
+    private fun atSlot(whenMs: Long, block: () -> Unit) {
+        val g = slotGen
+        handler.postDelayed({ if (g == slotGen) block() },
+                            maxOf(0L, whenMs - System.currentTimeMillis()))
     }
 
     // MARK: - Scoring

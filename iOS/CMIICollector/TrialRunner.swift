@@ -66,8 +66,10 @@ final class TrialRunner: ObservableObject {
     ///
     /// Scenes whose slot has already elapsed are skipped and recorded as
     /// "not_run", so the file still accounts for every scene in the play.
-    func start(_ s: Play, joinedLateMs: Int = 0) {
+    func start(_ s: Play, joinedLateMs: Int = 0, zeroDeviceMs: Int? = nil) {
         play = s
+        zeroMs = zeroDeviceMs ?? (Self.nowMs() - joinedLateMs)
+        slotGen += 1
         index = 0; nDone = 0; nMatched = 0
         lastOutcome = ""; lastMatched = nil
         skipped = 0
@@ -85,10 +87,67 @@ final class TrialRunner: ObservableObject {
         }
         guard index < s.trials.count else { phase = .done; return }
         beginReady()
+        startTicking()
+    }
+
+    /// Where scene `i` begins and ends, on this device's clock.
+    private func slotStart(_ i: Int) -> Int {
+        guard let s = play else { return zeroMs }
+        var cursor = 0
+        for (j, t) in s.trials.enumerated() {
+            let begins = t.startMs ?? cursor
+            if j == i { return zeroMs + begins }
+            cursor = begins + slotLength(t, s)
+        }
+        return zeroMs + cursor
+    }
+
+    private func slotEnd(_ i: Int) -> Int {
+        guard let s = play, i < s.trials.count else { return slotStart(i) }
+        return slotStart(i) + slotLength(s.trials[i], s)
+    }
+
+    private func slotLength(_ t: Trial, _ s: Play) -> Int {
+        t.slotMs ?? (s.readyMs + (t.durationMs ?? s.cueTimeoutMs) + s.settleMs)
+    }
+
+    /// Drives the countdown, ten times a second. Independent of the phase
+    /// timers on purpose: if a scheduled callback is ever late, the number on
+    /// screen still tells the truth about the slot.
+    private func startTicking() {
+        ticker?.invalidate()
+        ticker = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] t in
+            guard let self else { t.invalidate(); return }
+            guard self.isRunning else { self.remainingMs = 0; t.invalidate(); return }
+            self.remainingMs = max(0, self.slotEnd(self.index) - Self.nowMs())
+        }
     }
 
     /// How many scenes were already over when this tablet joined.
     @Published private(set) var skipped = 0
+
+    /// Milliseconds left in the scene now running, for the countdown on screen.
+    ///
+    /// Time left in the SLOT, not in the cue window: the scene is over when its
+    /// slot is, whether or not the gesture was done in the first second.
+    @Published private(set) var remainingMs = 0
+
+    /// The play's own zero, on THIS device's clock.
+    ///
+    /// Every scene boundary is measured from here rather than from whenever the
+    /// previous scene happened to end. Two tablets derive it from the same
+    /// scheduled instant, each corrected by its own measured server offset, so
+    /// they agree about when scene 7 begins without ever talking to each other.
+    ///
+    /// Device time, not server time: every timestamp in the CSVs is device time,
+    /// and a file with two clocks in it cannot be aligned against the sensors.
+    private var zeroMs = 0
+
+    /// A second cancellation token, for the slot boundary alone. `gen` is bumped
+    /// by every phase change, which cancels everything outstanding - right for
+    /// the phase timers, fatal for the one callback that must survive them.
+    private var slotGen = 0
+    private var ticker: Timer?
 
     /// A scene the tablet was not running for. Same shape as a played row so the
     /// file has one row per scene either way.
@@ -98,6 +157,8 @@ final class TrialRunner: ObservableObject {
 
     func abort() {
         gen += 1
+        slotGen += 1
+        ticker?.invalidate(); ticker = nil
         phase = .idle
         current = nil
         displayTrial = nil
@@ -146,7 +207,9 @@ final class TrialRunner: ObservableObject {
         guard phase == .cued, let s = play, current?.isFreeform != true else { return }
         gen += 1                                   // cancel the cue timeout
         phase = .settling
-        after(s.settleMs, gen) { [weak self] in self?.finish("completed") }
+        at(min(Self.nowMs() + s.settleMs, slotEnd(index)), gen) { [weak self] in
+            self?.finish("completed")
+        }
     }
 
     // MARK: - Phases
@@ -158,7 +221,11 @@ final class TrialRunner: ObservableObject {
         displayTrial = current
         phase = .ready
         gen += 1
-        after(s.readyMs, gen) { [weak self] in self?.showCue() }
+        // Anchored to the slot, not to "now": a scene that begins a little late
+        // must still end on time, or the lateness accumulates down the play and
+        // two tablets drift apart scene by scene.
+        at(slotStart(index) + s.readyMs, gen) { [weak self] in self?.showCue() }
+        atSlot(slotEnd(index)) { [weak self] in self?.closeSlot() }
     }
 
     private func showCue() {
@@ -177,7 +244,11 @@ final class TrialRunner: ObservableObject {
         // of them means a scene went unanswered.
         let ending = current?.isWaiting == true ? "waiting"
                    : current?.isFreeform == true ? "elapsed" : "timeout"
-        after(window, gen) { [weak self] in self?.finish(ending) }
+        // The cue window is the shorter of what the scene asks for and what is
+        // left of the slot; the slot is what actually ends the scene.
+        at(min(Self.nowMs() + window, slotEnd(index)), gen) { [weak self] in
+            self?.finish(ending)
+        }
     }
 
     private func finish(_ outcome: String) {
@@ -205,13 +276,29 @@ final class TrialRunner: ObservableObject {
             : (matched == nil ? "recorded"
                : (matched == true ? "matched" : "got \(observed.isEmpty ? "nothing" : observed)"))
 
+        // The row is written the moment the scene resolves, so the timing in the
+        // file is the real timing - but the board waits out the rest of the slot
+        // before moving on. Advancing early is what let two tablets wander
+        // seconds apart, and what made the scene number jump before the
+        // countdown reached zero.
         phase = .gap
-        let gap = Int.random(in: s.gapMinMs...s.gapMaxMs)
-        after(gap, gen) { [weak self] in
-            guard let self else { return }
-            self.index += 1
-            if self.index >= self.total { self.finishStudy() } else { self.beginReady() }
+    }
+
+    /// The slot is over: the only thing that advances the scene.
+    private func closeSlot() {
+        guard let s = play else { return }
+        // A scene still open when the slot ends - a slot shorter than the
+        // window, or a callback that did not fire - is resolved here rather
+        // than left unrecorded.
+        if phase == .ready || phase == .cued || phase == .settling {
+            let ending = current?.isWaiting == true ? "waiting"
+                       : current?.isFreeform == true ? "elapsed" : "timeout"
+            finish(ending)
         }
+        gen += 1
+        slotGen += 1
+        index += 1
+        if index >= s.trials.count { finishStudy() } else { beginReady() }
     }
 
     private func finishStudy() {
@@ -269,6 +356,22 @@ final class TrialRunner: ObservableObject {
     // MARK: - Helpers
 
     static func nowMs() -> Int { Int(Date().timeIntervalSince1970 * 1000) }
+
+    /// Run at an absolute instant on this device's clock, or at once if past.
+    private func at(_ whenMs: Int, _ token: Int, _ body: @escaping () -> Void) {
+        after(max(0, whenMs - Self.nowMs()), token, body)
+    }
+
+    /// As `at`, but survives phase changes within the scene.
+    private func atSlot(_ whenMs: Int, _ body: @escaping () -> Void) {
+        let g = slotGen
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + .milliseconds(max(0, whenMs - Self.nowMs()))
+        ) { [weak self] in
+            guard let self, g == self.slotGen else { return }
+            body()
+        }
+    }
 
     private func after(_ ms: Int, _ token: Int, _ body: @escaping () -> Void) {
         DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(ms)) { [weak self] in

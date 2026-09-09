@@ -155,6 +155,8 @@ struct ContentView: View {
         scenesTotal = play.trials.count
         uploader.clearProgress()
         startRecording(play)
+        // Joining after the instant: the zero is still the schedule, just behind
+        // us. Without a schedule at all it is the button press.
         runner.start(play, joinedLateMs: joinedLateMs)
         screen = .running
     }
@@ -173,8 +175,13 @@ struct ContentView: View {
     private func beginArmed(_ play: Play) {
         guard screen == .armed else { return }
         if !recorder.isRecording { startRecording(play) }
+        let at = armedStart
         armedPlay = nil; armedStart = nil
-        runner.start(play, joinedLateMs: 0)
+        // The scheduled instant, expressed on THIS device's clock. Both tablets
+        // do the same conversion with their own measured offset, so both end up
+        // with the same zero without ever comparing notes.
+        let zero = at.map { Int($0.timeIntervalSince1970 * 1000) - server.clockOffsetMs }
+        runner.start(play, joinedLateMs: 0, zeroDeviceMs: zero)
         screen = .running
     }
 
