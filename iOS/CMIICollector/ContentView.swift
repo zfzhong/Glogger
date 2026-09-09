@@ -30,6 +30,21 @@ struct ContentView: View {
     @State private var armedStart: Date?
     @State private var armedRemaining: TimeInterval = 0
 
+    /// One timer, owned for the whole armed period.
+    ///
+    /// It used to be an inline `Timer.publish(...).autoconnect()` inside the
+    /// view body, which SwiftUI rebuilds on every body pass - and the body runs
+    /// on every tick, and again on every @Published change from the recorder.
+    /// Starting the pre-roll therefore tore down and replaced the very timer
+    /// that was counting, and the countdown stopped dead at 0:10 while the
+    /// recorder carried on happily in the background.
+    @State private var armTicker: Timer?
+
+    /// The pre-roll must happen once. `!recorder.isRecording` was the only
+    /// guard, and a guard that depends on the thing it starts is a guard that
+    /// fires twice if the start is not instantaneous.
+    @State private var prerollStarted = false
+
     /// How long before the start the recorder and beacon come up.
     ///
     /// Not at the instant itself: the watch has to find the beacon before it can
@@ -54,25 +69,12 @@ struct ContentView: View {
                     }
                 }
             case .armed:
-                if let play = armedPlay, let at = armedStart {
+                if let play = armedPlay {
                     ArmedView(play: play, experimentName: config.experimentName,
                               remaining: armedRemaining,
                               isRecording: recorder.isRecording,
                               clockKnown: server.clockKnown,
                               onCancel: cancelArmed)
-                        // Ten ticks a second, not one: the start has to land on
-                        // the instant, not on whenever this tablet's second
-                        // happened to roll over, or two tablets are up to a
-                        // second apart.
-                        .onReceive(Timer.publish(every: 0.1, on: .main, in: .common)
-                                        .autoconnect()) { _ in
-                            let left = at.timeIntervalSince(server.serverNow())
-                            armedRemaining = left
-                            if left <= Self.preroll, !recorder.isRecording {
-                                startRecording(play)
-                            }
-                            if left <= 0 { beginArmed(play) }
-                        }
                 } else {
                     Color.clear.onAppear { screen = .list }
                 }
@@ -168,12 +170,43 @@ struct ContentView: View {
         armedRemaining = date.timeIntervalSince(server.serverNow())
         scenesTotal = play.trials.count
         uploader.clearProgress()
+        prerollStarted = false
         screen = .armed
+        startArmTicker(play, at: date)
+    }
+
+    /// Ten ticks a second, not one: the start has to land on the instant, not on
+    /// whenever this tablet's second happened to roll over, or two tablets are
+    /// up to a second apart.
+    ///
+    /// Added to .common so the countdown keeps running while a finger is down on
+    /// the screen - a participant resting a hand on the tablet must not be able
+    /// to delay the start.
+    private func startArmTicker(_ play: Play, at date: Date) {
+        armTicker?.invalidate()
+        let t = Timer(timeInterval: 0.1, repeats: true) { _ in
+            guard screen == .armed else { return }
+            let left = date.timeIntervalSince(server.serverNow())
+            armedRemaining = left
+            if left <= Self.preroll, !prerollStarted {
+                prerollStarted = true
+                startRecording(play)
+            }
+            if left <= 0 { beginArmed(play) }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        armTicker = t
+    }
+
+    private func stopArmTicker() {
+        armTicker?.invalidate()
+        armTicker = nil
     }
 
     /// The instant arrived: the recorder is already running, so only run the play.
     private func beginArmed(_ play: Play) {
         guard screen == .armed else { return }
+        stopArmTicker()
         if !recorder.isRecording { startRecording(play) }
         let at = armedStart
         armedPlay = nil; armedStart = nil
@@ -186,6 +219,8 @@ struct ContentView: View {
     }
 
     private func cancelArmed() {
+        stopArmTicker()
+        prerollStarted = false
         armedPlay = nil; armedStart = nil
         // Whatever pre-roll was captured is not a session; drop it rather than
         // leaving a stub folder that looks like an aborted run.
