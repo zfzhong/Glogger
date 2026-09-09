@@ -52,9 +52,16 @@ fun StudyScreen(
     onWebEvent: (String, String) -> Unit = { _, _ -> }
 ) {
     // A web scene takes the whole screen apart from a thin operator strip.
+    // GAP is part of the scene, not a pause between scenes.
+    //
+    // The runner leaves the cue window and sits in GAP until the slot ends. That
+    // used to be invisible, because the scene advanced a moment later. Now that
+    // the slot is what advances it, a screen keyed on the earlier phases blanked
+    // itself for the last seconds of its own scene - the waiting message
+    // disappearing while the counter still said the scene was running.
     val web = runner.current?.takeIf {
         it.isWeb && runner.phase in listOf(TrialRunner.Phase.READY, TrialRunner.Phase.CUED,
-                                           TrialRunner.Phase.SETTLING)
+                                           TrialRunner.Phase.SETTLING, TrialRunner.Phase.GAP)
     }
     if (web != null) { WebBody(runner, web, onWebEvent); return }
     CardBoard(runner, waitingText)
@@ -108,7 +115,7 @@ private fun CardBoard(runner: TrialRunner, waitingText: String) {
     val quiet: Trial? = runner.current?.takeIf {
         (it.isWaiting || it.isOffscreen) &&
             runner.phase in listOf(TrialRunner.Phase.READY, TrialRunner.Phase.CUED,
-                                   TrialRunner.Phase.SETTLING)
+                                   TrialRunner.Phase.SETTLING, TrialRunner.Phase.GAP)
     }
 
     // Deck state per block, wiped between scenes. A deck left flicked twice
@@ -265,7 +272,9 @@ private fun Board(
     val live = runner.current.takeIf {
         runner.phase == TrialRunner.Phase.CUED || runner.phase == TrialRunner.Phase.SETTLING
     }
-    val flashing = runner.current.takeIf { runner.phase == TrialRunner.Phase.GAP }
+    val flashing = runner.current?.takeIf {
+        runner.phase == TrialRunner.Phase.GAP && !it.isWaiting && !it.isOffscreen
+    }
     val big = max(rows, cols)
     val density = LocalDensity.current
 

@@ -343,24 +343,42 @@ struct StudyView: View {
         return t.row == r && t.col == c
     }
 
+    /// GAP is part of the scene, not a pause between scenes.
+    ///
+    /// The runner leaves the cue window and sits in .gap until the slot ends.
+    /// That used to be invisible, because the scene advanced a moment later. Now
+    /// that the slot is what advances it, a screen keyed on the earlier phases
+    /// blanked itself for the last seconds of its own scene.
     private var webScene: Trial? {
         guard let t = runner.current, t.isWeb,
               runner.phase == .ready || runner.phase == .cued
-                || runner.phase == .settling else { return nil }
+                || runner.phase == .settling || runner.phase == .gap else { return nil }
         return t
     }
 
+    /// GAP is part of the scene, not a pause between scenes.
+    ///
+    /// The runner leaves the cue window and sits in .gap until the slot ends.
+    /// That used to be invisible, because the scene advanced a moment later. Now
+    /// that the slot is what advances it, a screen keyed on the earlier phases
+    /// blanked itself for the last seconds of its own scene.
     private var waitingScene: Trial? {
         guard let t = runner.current, t.isWaiting,
               runner.phase == .ready || runner.phase == .cued
-                || runner.phase == .settling else { return nil }
+                || runner.phase == .settling || runner.phase == .gap else { return nil }
         return t
     }
 
+    /// GAP is part of the scene, not a pause between scenes.
+    ///
+    /// The runner leaves the cue window and sits in .gap until the slot ends.
+    /// That used to be invisible, because the scene advanced a moment later. Now
+    /// that the slot is what advances it, a screen keyed on the earlier phases
+    /// blanked itself for the last seconds of its own scene.
     private var offscreenScene: Trial? {
         guard let t = runner.current, t.isOffscreen,
               runner.phase == .ready || runner.phase == .cued
-                || runner.phase == .settling else { return nil }
+                || runner.phase == .settling || runner.phase == .gap else { return nil }
         return t
     }
 
@@ -375,6 +393,11 @@ struct StudyView: View {
 
     private func isFlashing(_ r: Int, _ c: Int) -> Bool {
         guard let t = runner.current, runner.phase == .gap else { return false }
+        // The flash acknowledges a scene that was acted on. A waiting or
+        // water-break scene has nothing to acknowledge, and its row and column
+        // are carried over from the tablet that IS playing - the flash would
+        // light a block chosen by the other tablet.
+        if t.isWaiting || t.isOffscreen { return false }
         return t.row == r && t.col == c
     }
 
