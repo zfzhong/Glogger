@@ -1,0 +1,28 @@
+# --- Android ---
+.gradle/
+build/
+local.properties
+captures/
+*.apk
+*.aab
+
+# --- Xcode ---
+xcuserdata/
+*.xcuserstate
+DerivedData/
+*.mobileprovision
+
+# --- credentials and keys, never ---
+*.pem
+*.key
+*.keystore
+*.jks
+
+# --- recordings ---
+# Sessions pulled off a tablet are participant data, not source. They belong
+# with the study, not in the app repository.
+sessions/
+*.csv
+
+# --- OS cruft ---
+.DS_Store
