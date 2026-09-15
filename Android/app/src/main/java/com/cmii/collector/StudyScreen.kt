@@ -128,6 +128,23 @@ private fun CardBoard(runner: TrialRunner, waitingText: String) {
     val frames = remember { mutableStateMapOf<Int, Rect>() }
     LaunchedEffect(runner.index) { decks.clear(); carry = null }
 
+    // A drag needs the participant to know WHICH card is being moved, so the
+    // card to be dragged is turned face up as the cue appears.
+    //
+    // Only a travelling scene. On a tap scene the card has to start face down
+    // or there is nothing to flip, and the flip is the gesture being measured.
+    //
+    // At the cue, not at the start of the scene: a face showing during "Get
+    // ready" would name the target a second early, and the participant would
+    // have their hand there before the scene began.
+    LaunchedEffect(runner.index, runner.phase) {
+        val t = runner.current
+        if (runner.phase == TrialRunner.Phase.CUED && t != null && t.isTravelling) {
+            val b = t.row * cols + t.col
+            decks[b] = (decks[b] ?: DeckState()).copy(faceUp = true)
+        }
+    }
+
     val pool = play?.blockPictures ?: Animals.all
     fun deckAnimals(block: Int): List<String> {
         // Three faces in one deck. Different animals within a deck; the deck is

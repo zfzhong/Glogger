@@ -49,7 +49,25 @@ struct StudyView: View {
             }
         }
         .onChange(of: runner.index) { _, _ in decks = [:]; carry = nil; picked = nil }
-        .onChange(of: runner.phase) { _, p in if p == .idle { decks = [:] } }
+        .onChange(of: runner.phase) { _, p in
+            if p == .idle { decks = [:] }
+            // A drag needs the participant to know WHICH card is being moved,
+            // so the card to be dragged is turned face up as the cue appears.
+            //
+            // Only a travelling scene. On a tap scene the card has to start
+            // face down or there is nothing to flip, and the flip is the
+            // gesture being measured.
+            //
+            // At the cue, not at the start of the scene: a face showing during
+            // "Get ready" would name the target a second early, and the
+            // participant would have their hand there before the scene began.
+            if p == .cued, let t = runner.current, t.isTravelling {
+                let b = t.row * grid.cols + t.col
+                var st = decks[b] ?? DeckState()
+                st.faceUp = true
+                decks[b] = st
+            }
+        }
     }
 
     private var boardBody: some View {
