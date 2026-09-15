@@ -187,6 +187,12 @@ private fun ExperimentRow(
                              color = warn())
                     }
                 }
+                // A free experiment skips every check the others enforce, so
+                // it says so on the card. Nobody should reach the end of a
+                // sitting and discover it was the test experiment.
+                if (e.free)
+                    Text("free · testing — not participant data",
+                         style = MaterialTheme.typography.bodySmall, color = warn())
                 if (role != null) {
                     val beacons = e.advertisesFor(deviceId)
                     Text(if (e.tablets > 1)

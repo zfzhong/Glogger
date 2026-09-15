@@ -154,7 +154,13 @@ data class ExperimentInfo(
     val advertiseA: String? = null,
     val advertiseB: String? = null,
     /** "B", "A" or "both" — which tablet the watch scans for in this experiment. */
-    val beacon: String = "B"
+    val beacon: String = "B",
+    /**
+     * A testing experiment: every tablet lists it, it needs no schedule and no
+     * assignment, and its sessions are not participant data. Shown as such on
+     * the list, because it is the one experiment that skips every check.
+     */
+    val free: Boolean = false
 ) {
     /**
      * Whether THIS tablet is a beacon here.
@@ -164,6 +170,9 @@ data class ExperimentInfo(
      */
     fun advertisesFor(deviceId: String): Boolean {
         if (tablets <= 1) return true
+        // Free and unassigned: nobody is the decoy, so whoever picked it up is
+        // the beacon. Otherwise a test looks like a BLE fault.
+        if (free && tabletA == null && tabletB == null) return true
         val mine = roleFor(deviceId) ?: return false
         return beacon == "both" || beacon == mine
     }
@@ -193,6 +202,10 @@ data class ExperimentInfo(
      * beacon or duplicate it.
      */
     fun resolvedRole(deviceId: String): String? {
+        // A free experiment is offered to every tablet, assigned or not. An
+        // assignment is still honoured where one exists, so a free two-tablet
+        // play can still be split deliberately.
+        if (free) return roleFor(deviceId) ?: if (tablets <= 1) "B" else "A"
         // An experiment with no device assigned is not ready, whatever else is
         // set on it, so no tablet offers it.
         val mine = roleFor(deviceId) ?: return null

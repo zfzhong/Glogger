@@ -175,6 +175,13 @@ struct ExperimentListView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
+                // A free experiment skips every check the others enforce, so it
+                // says so on the card. Nobody should reach the end of a sitting
+                // and discover it was the test experiment.
+                if e.free {
+                    Text("free · testing — not participant data")
+                        .font(.caption).foregroundStyle(.orange)
+                }
                 if let mine = e.resolvedRole(for: config.deviceId) {
                     let beacons = e.advertises(for: config.deviceId)
                     Label(e.tabletsValue > 1

@@ -43,6 +43,11 @@ struct ExperimentInfo: Codable, Identifiable, Hashable {
     /// "B", "A" or "both" - which tablet the watch scans for in this experiment.
     var beacon: String? = nil
 
+    /// A testing experiment: every tablet lists it, it needs no schedule and no
+    /// assignment, and its sessions are not participant data. Marked as such on
+    /// the list, because it is the one experiment that skips every check.
+    var free: Bool = false
+
     var hasPlay: Bool { (playId ?? 0) > 0 && trialCount > 0 }
     var hasAssignment: Bool { tabletA != nil || tabletB != nil }
 
@@ -66,6 +71,9 @@ struct ExperimentInfo: Codable, Identifiable, Hashable {
     /// against, and a silent lone tablet leaves the watch with nothing.
     func advertises(for deviceId: String) -> Bool {
         if tabletsValue <= 1 { return true }
+        // Free and unassigned: nobody is the decoy, so whoever picked it up is
+        // the beacon. Otherwise a test looks like a BLE fault.
+        if free, !hasAssignment { return true }
         guard let mine = role(for: deviceId) else { return false }
         let b = beacon ?? "B"
         return b == "both" || b == mine
@@ -83,8 +91,13 @@ struct ExperimentInfo: Codable, Identifiable, Hashable {
         // assigned to - otherwise a single-tablet run assigned to slot A would go
         // silent and the watch would record nothing at all.
         // An experiment with no device assigned is not ready, whatever else is
-        // set on it, so no tablet offers it.
-        guard let mine = role(for: deviceId) else { return nil }
+        // set on it, so no tablet offers it - unless it is free, which is
+        // exactly the experiment that exists to be picked up by anything. An
+        // assignment is still honoured where one exists, so a free two-tablet
+        // play can still be split deliberately.
+        guard let mine = role(for: deviceId) else {
+            return free ? (tabletsValue <= 1 ? "B" : "A") : nil
+        }
         return tabletsValue <= 1 ? "B" : mine
     }
 
