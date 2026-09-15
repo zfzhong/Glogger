@@ -257,12 +257,17 @@ fun CardDeckView(
                      modifier = Modifier.offset(d.dp, d.dp))
         }
 
-        var g = Modifier
-            .graphicsLayer {
-                rotationY = spin
-                alpha = if (carrying) 0f else 1f
-                cameraDistance = 14f * density.density
-            }
+        // Gestures go on an UNTRANSFORMED wrapper, and the flip rotation goes on
+        // the card inside it.
+        //
+        // They used to share one layer, and that inverted the drag. Compose maps
+        // pointer positions back through a graphicsLayer, so at rotationY = 180
+        // the layer is mirrored and a finger moving left reports local deltas
+        // moving right. It stayed hidden while cards were face down during a
+        // gesture; revealing the card on drag and flick scenes set spin to 180
+        // and the drag started running backwards. Vertical was always fine -
+        // rotationY does not touch y.
+        var g: Modifier = Modifier
         if (interactive) {
             g = g
                 .pointerInput(block) {
@@ -316,9 +321,10 @@ fun CardDeckView(
         Box(g) {
             CardFace(back = back, faceUp = state.showsFace, animal = top,
                      cardSize = cardSize, lifted = live,
-                     // Counter-rotated so the face is not mirrored by the spin.
                      modifier = Modifier.graphicsLayer {
-                         rotationY = if (spin > 90f) 180f else 0f
+                         rotationY = spin
+                         alpha = if (carrying) 0f else 1f
+                         cameraDistance = 14f * density.density
                      })
         }
     }

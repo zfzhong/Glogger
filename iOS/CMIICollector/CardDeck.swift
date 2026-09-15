@@ -181,19 +181,32 @@ struct CardDeckView: View {
                             y: CGFloat(depth - 1 - i) * 3.5)
                     .opacity(0.9)
             }
-            cardShape(faceUp: state.showsFace, animal: topAnimal)
-                .rotation3DEffect(.degrees(state.showsFace ? 180 : 0),
-                                  axis: (x: 0, y: 1, z: 0))
-                .animation(.easeInOut(duration: 0.22), value: state.showsFace)
-                .opacity(carrying ? 0 : 1)
-                .allowsHitTesting(interactive)
-                .gesture(drag)
-                .onTapGesture(count: 2) { set(.unflip) }        // must precede single
-                .onTapGesture { set(.flip) }
-                .onLongPressGesture(minimumDuration: 0.35, pressing: { down in
-                    state.peeking = down
-                    onEvent(down ? .peek : .peekEnd)
-                }, perform: {})
+            // The flip rotation goes on the card; the gestures go on an
+            // untransformed wrapper around it.
+            //
+            // Sharing one view inverted the drag on Android, where pointer
+            // positions are mapped back through the layer's transform: at 180
+            // degrees about y the layer is mirrored, so a finger moving left
+            // reported deltas moving right. It stayed hidden while cards were
+            // face down during a gesture, and appeared the moment drag and
+            // flick scenes started revealing the card. The same shape is not
+            // worth keeping here on the chance SwiftUI differs.
+            ZStack {
+                cardShape(faceUp: state.showsFace, animal: topAnimal)
+                    .rotation3DEffect(.degrees(state.showsFace ? 180 : 0),
+                                      axis: (x: 0, y: 1, z: 0))
+                    .animation(.easeInOut(duration: 0.22), value: state.showsFace)
+                    .opacity(carrying ? 0 : 1)
+            }
+            .contentShape(Rectangle())
+            .allowsHitTesting(interactive)
+            .gesture(drag)
+            .onTapGesture(count: 2) { set(.unflip) }        // must precede single
+            .onTapGesture { set(.flip) }
+            .onLongPressGesture(minimumDuration: 0.35, pressing: { down in
+                state.peeking = down
+                onEvent(down ? .peek : .peekEnd)
+            }, perform: {})
         }
         .frame(width: cardSize, height: cardSize * 1.35)
         .animation(.easeOut(duration: 0.18), value: state.discarded)
