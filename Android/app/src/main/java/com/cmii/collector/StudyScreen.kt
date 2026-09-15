@@ -171,7 +171,10 @@ private fun CardBoard(runner: TrialRunner, waitingText: String) {
             decks[src] = st.copy(
                 discarded = min(st.discarded + 1, max(0, depth - 1)), faceUp = false)
             val dst = stateOf(target)
-            decks[target] = dst.copy(received = dst.received + animal)
+            // The arriving card lands face up. Until it did, a drop that
+            // worked and a drop that missed left the board looking exactly
+            // the same, so nothing on screen said the card had moved.
+            decks[target] = dst.copy(received = dst.received + animal, faceUp = true)
             runner.cardDropped(src, target, animal)
         } else if (isFlick(predicted)) {
             // Thrown, but not onto anything: a flick discards the top card.
@@ -346,7 +349,10 @@ private fun Board(
             val x = (carriedAt.x - origin.x - w / 2f).toInt()
             val y = (carriedAt.y - origin.y - h / 2f).toInt()
             Box(Modifier.align(Alignment.TopStart).offset { IntOffset(x, y) }) {
-                CardFace(back = DeckBack.forBlock(b), faceUp = showsFaceOf(b),
+                // Face up the instant it lifts, and without a flip
+    // animation: a card in the hand is a card you can see, and an
+    // animation competing with the drag makes the pickup feel slow.
+                CardFace(back = DeckBack.forBlock(b), faceUp = true,
                          animal = topOf(b), cardSize = side, lifted = true)
             }
         }

@@ -284,7 +284,9 @@ struct StudyView: View {
             let st = decks[carry.block] ?? DeckState()
             let side = min(f.width * 0.66, f.height / 1.35 * 0.82)
             CardFace(back: DeckBack.forBlock(carry.block),
-                     faceUp: st.showsFace,
+                     // Face up the instant it lifts, and without a flip
+                     // animation: a card in the hand is a card you can see.
+                     faceUp: true,
                      animal: topAnimal(of: carry.block, state: st),
                      cardSize: max(40, side), lifted: true)
                 .frame(width: max(40, side), height: max(40, side) * 1.35)
@@ -320,6 +322,9 @@ struct StudyView: View {
             decks[src] = st
             var dst = decks[target] ?? DeckState()
             dst.received.append(animal)
+            // Lands face up. Until it did, a drop that worked and a drop that
+            // missed left the board looking exactly the same.
+            dst.faceUp = true
             decks[target] = dst
             runner.cardDropped(from: src, to: target, animal: animal)
         } else if hypot(predicted.width, predicted.height) > 120 {
