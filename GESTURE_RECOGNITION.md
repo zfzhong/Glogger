@@ -7,6 +7,44 @@ This is the reference for that decision. It is written against the code as it
 stands, including the places where the two platforms currently disagree — those
 are listed in "Divergences" at the end rather than quietly smoothed over.
 
+## 0. Scope: this is user experience, not measurement
+
+**Everything in this document exists so the tablet can react to the participant.
+None of it collects the study's data.**
+
+`Sensors.kt` and `MotionLogger.swift` contain no reference to `phase`, `runner`,
+`gesture` or `trial`. The accelerometer, gyroscope, magnetometer and BLE loggers
+run on their own timers from the moment recording starts. Delete every
+classifier in this document and `_imu_accel.csv`, `_imu_gyro.csv`,
+`_imu_mag.csv` and `_ble.csv` come out identical.
+
+The consequence is worth stating plainly, because it is easy to read a threshold
+like `flingVel = 420` and assume it is a measurement parameter. It is not. Get
+the swipe/scroll split wrong and not one sample of inertial or radio data
+changes. What changes is whether the card does what the participant expected.
+
+That still matters, for a reason that runs the other way: a participant whose
+gesture produced no response repeats it, and that trial's sensor window then
+contains two movements instead of one. Reaction quality is how you get one clean
+gesture per window. It is not how you get the window.
+
+Two things in here are **not** covered by the above, and are data:
+
+1. **Stroke boundaries.** `firstDownMs` and `lastUpMs` in `_trials.csv` come out
+   of `StrokeAssembler` — the same file as the classifier — and that window is
+   what slices the watch's IMU stream for a trial. Boundary detection, not
+   classification, but it shares the pipeline.
+
+2. **The verdict, if it is ever used to filter.** `match` in `_trials.csv`
+   decides nothing on its own. But an analysis that keeps only matching trials
+   has let the scorer choose which sensor segments enter the dataset — and the
+   scorer currently disagrees between platforms (see Divergences). If trials are
+   never filtered on `match`, those divergences are cosmetic.
+
+**The cue is the label.** The play says which gesture was asked for; the
+classifier only verifies. iOS states this on the scorer itself: *"Scoring
+(verification only — the cue is the label)."*
+
 ---
 
 ## 1. Three layers, three answers
