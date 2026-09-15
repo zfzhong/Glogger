@@ -14,8 +14,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -131,6 +133,8 @@ private const val SPIN_MS = 600
 private const val FAST_MS = 120
 private const val FLIP_MS = 220
 private const val CIRCLE_MS = 420
+private const val PRESS_IN_MS = 40
+private const val PRESS_OUT_MS = 130
 
 /** What the deck actually did, independent of what the classifier decided. */
 enum class DeckEvent(val wire: String) {
@@ -153,6 +157,8 @@ fun CardFace(
     animal: String,
     cardSize: Dp,
     lifted: Boolean = false,
+    /** Finger down on it: the card sits into the table rather than above it. */
+    pressed: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val radius = cardSize * 0.11f
@@ -160,7 +166,7 @@ fun CardFace(
     Box(
         modifier
             .size(cardSize, cardSize * 1.35f)
-            .shadow(if (lifted) 6.dp else 3.dp, shape)
+            .shadow(if (pressed) 1.dp else if (lifted) 6.dp else 3.dp, shape)
             .clip(shape)
             .drawBehind {
                 drawRect(if (faceUp) Color(0xFFFCFCFC) else back.color)
@@ -297,6 +303,23 @@ fun CardDeckView(
     val top = topAnimalOf(animals, state)
     val density = LocalDensity.current
 
+    // Touch-down feedback, before anything has been recognised.
+    //
+    // Both toolkits hold a single tap back until the double-tap window closes -
+    // about 300ms - so without this the card sits inert for a third of a second
+    // after being touched, and the participant cannot tell whether the tablet
+    // noticed. The press state is the one piece of feedback that does not have
+    // to wait to find out which gesture this is, so it fires for all of them:
+    // tap, double tap, hold, flick and drag alike.
+    //
+    // Down instantly, back slower, which is the usual asymmetry - the touch has
+    // to feel acknowledged at once, the release only has to look unhurried.
+    var pressed by remember { mutableStateOf(false) }
+    val press by animateFloatAsState(
+        targetValue = if (pressed) 0.96f else 1f,
+        animationSpec = tween(if (pressed) PRESS_IN_MS else PRESS_OUT_MS),
+        label = "press")
+
     // How far the card turns, and how fast, is chosen by the gesture that
     // revealed it. CIRCLE does not turn at all - it stays face down and the
     // face spreads over it, below.
@@ -396,9 +419,13 @@ fun CardDeckView(
                             note(DeckEvent.PEEK)
                         },
                         onPress = {
+                            // Down before anything is recognised: this is the
+                            // only handler that runs at the moment of contact.
+                            pressed = true
                             // The face is shown only while held, so the release
                             // has to end it however the press ends.
                             tryAwaitRelease()
+                            pressed = false
                             if (cur.peeking) {
                                 emit(cur.copy(peeking = false)); note(DeckEvent.PEEK_END)
                             }
@@ -428,8 +455,11 @@ fun CardDeckView(
         Box(g) {
             CardFace(back = back, faceUp = faceShowing, animal = top,
                      cardSize = cardSize, lifted = live,
+                     pressed = pressed,
                      modifier = Modifier.graphicsLayer {
                          rotationY = spin
+                         scaleX = press
+                         scaleY = press
                          alpha = if (carrying) 0f else 1f
                          cameraDistance = 14f * density.density
                      })
@@ -440,8 +470,9 @@ fun CardDeckView(
             // rotation and the carry-alpha act on and this one must do neither.
             if (iris > 0.001f && !carrying) {
                 CardFace(back = back, faceUp = true, animal = top,
-                         cardSize = cardSize, lifted = live,
-                         modifier = Modifier.clip(Iris(iris)))
+                         cardSize = cardSize, lifted = live, pressed = pressed,
+                         modifier = Modifier.clip(Iris(iris))
+                                            .graphicsLayer { scaleX = press; scaleY = press })
             }
         }
     }

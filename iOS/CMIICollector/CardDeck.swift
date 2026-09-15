@@ -155,6 +155,10 @@ private let spinSeconds  = 0.60
 private let fastSeconds  = 0.12
 private let flipSeconds  = 0.22
 private let irisSeconds  = 0.42
+/// Touch-down feedback. Down instantly, back slower: the touch has to feel
+/// acknowledged at once, the release only has to look unhurried.
+private let pressInSeconds  = 0.04
+private let pressOutSeconds = 0.13
 
 /// What the deck actually did, independent of what the classifier decided.
 enum DeckEvent: String {
@@ -199,6 +203,14 @@ struct CardDeckView: View {
     var carrying: Bool = false
     @Binding var state: DeckState
     var onEvent: (DeckEvent) -> Void = { _ in }
+    /// Finger down, before anything has been recognised.
+    ///
+    /// Both toolkits hold a single tap back until the double-tap window closes
+    /// - about 300ms - so without this the card sits inert for a third of a
+    /// second after being touched and the participant cannot tell whether the
+    /// tablet noticed. It is the one piece of feedback that does not have to
+    /// wait to find out which gesture this is, so it fires for all of them.
+    @State private var pressed = false
     var onDragChanged: (CGSize) -> Void = { _ in }
     var onDragEnded: (CGSize, CGSize) -> Void = { _, _ in }
 
@@ -232,10 +244,14 @@ struct CardDeckView: View {
             // worth keeping here on the chance SwiftUI differs.
             ZStack {
                 TurningCard(angle: turn, back: back, animal: topAnimal,
-                            cardSize: cardSize, lifted: live)
+                            cardSize: cardSize, lifted: live, pressed: pressed)
                     .animation(.easeInOut(duration: turnSeconds), value: turn)
                     .opacity(carrying ? 0 : 1)
                     .id(cardKey)
+                    .scaleEffect(pressed ? 0.96 : 1)
+                    .animation(.easeOut(duration: pressed ? pressInSeconds
+                                                          : pressOutSeconds),
+                               value: pressed)
 
                 // Hold's reveal: the face laid over the back, masked to a circle
                 // that grows from the centre. A second card rather than a mask on
@@ -246,7 +262,11 @@ struct CardDeckView: View {
                 // that opening and closing both animate - an overlay inserted by
                 // an `if` would appear already open.
                 CardFace(back: back, faceUp: true, animal: topAnimal,
-                         cardSize: cardSize, lifted: live)
+                         cardSize: cardSize, lifted: live, pressed: pressed)
+                    .scaleEffect(pressed ? 0.96 : 1)
+                    .animation(.easeOut(duration: pressed ? pressInSeconds
+                                                          : pressOutSeconds),
+                               value: pressed)
                     .mask(Circle()
                             .frame(width: irisFull, height: irisFull)
                             .scaleEffect(irisOpen ? 1 : 0.0001))
@@ -260,11 +280,28 @@ struct CardDeckView: View {
             .gesture(drag)
             .onTapGesture(count: 2) { doubleTapped() }      // must precede single
             .onTapGesture { tapped() }
+            // `pressing` fires the instant the finger lands and again when it
+            // lifts, whatever the gesture turns out to be. `perform` fires only
+            // once the hold has actually lasted minimumDuration.
+            //
+            // The peek used to hang off `pressing`, which meant every touch on
+            // the board - every tap, every start of a drag - opened a peek and
+            // closed it again on release. Session 0909_1215 has thirteen
+            // peek/peekEnd pairs from a twenty-scene run, some fifty
+            // milliseconds apart: the hold event was recording contact, not
+            // holding. It belongs on `perform`, which is the only callback that
+            // means a hold happened.
             .onLongPressGesture(minimumDuration: 0.35, pressing: { down in
-                if down { state.reveal = .circle }
-                state.peeking = down
-                onEvent(down ? .peek : .peekEnd)
-            }, perform: {})
+                pressed = down
+                if !down, state.peeking {
+                    state.peeking = false
+                    onEvent(.peekEnd)
+                }
+            }, perform: {
+                state.reveal = .circle
+                state.peeking = true
+                onEvent(.peek)
+            })
         }
         .frame(width: cardSize, height: cardSize * 1.35)
         .animation(.easeOut(duration: 0.18), value: state.discarded)
@@ -345,6 +382,7 @@ private struct TurningCard: View, Animatable {
     let animal: String
     let cardSize: CGFloat
     let lifted: Bool
+    var pressed: Bool = false
 
     var animatableData: Double {
         get { angle }
@@ -354,7 +392,8 @@ private struct TurningCard: View, Animatable {
     var body: some View {
         let showing = cos(angle * .pi / 180) < 0
         CardFace(back: back, faceUp: showing, animal: animal,
-                 cardSize: cardSize, lifted: lifted, counterRotate: showing)
+                 cardSize: cardSize, lifted: lifted, counterRotate: showing,
+                 pressed: pressed)
             .rotation3DEffect(.degrees(angle), axis: (x: 0, y: 1, z: 0))
     }
 }
@@ -376,6 +415,8 @@ struct CardFace: View {
     /// one carried under the finger are not inside a rotated parent, so they were
     /// drawing their animals back to front.
     var counterRotate: Bool = false
+    /// Finger down on it: the card sits into the table rather than above it.
+    var pressed: Bool = false
 
     var body: some View {
         let r = cardSize * 0.11
@@ -397,7 +438,7 @@ struct CardFace: View {
                 .strokeBorder(faceUp ? back.deep.opacity(0.5) : Color.black.opacity(0.18),
                               lineWidth: 2)
         }
-        .shadow(color: .black.opacity(lifted ? 0.22 : 0.12),
-                radius: lifted ? 6 : 3, x: 0, y: 2)
+        .shadow(color: .black.opacity(pressed ? 0.10 : (lifted ? 0.22 : 0.12)),
+                radius: pressed ? 1 : (lifted ? 6 : 3), x: 0, y: pressed ? 1 : 2)
     }
 }
