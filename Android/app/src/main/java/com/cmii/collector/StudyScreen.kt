@@ -204,7 +204,28 @@ private fun CardBoard(runner: TrialRunner, waitingText: String) {
             // Thrown, but not onto anything: a flick discards the top card. It
             // leaves along the direction it was thrown rather than blinking out
             // of existence, so the throw has a visible consequence.
-            val v = if (predicted.getDistance() > 1f) predicted else translation
+            // The card leaves along the CUED direction - the way the arrow on
+            // screen points - not along the exact angle the finger took. The
+            // arrow and the card then agree, and the animation is the same
+            // every time rather than being at the mercy of a hand's wobble.
+            //
+            // Reading it off the gesture was worse than untidy: the direction
+            // came from `predicted`, which is accumulated + lastDelta x 8, and
+            // the last delta as a finger lifts is small and noisy - sometimes
+            // pointing backwards. Multiplied by eight it flipped the sign, and
+            // a card flicked right flew left.
+            //
+            // `predicted` still decides WHETHER it was a throw, which is what
+            // it is good for: it stands in for speed.
+            val cued = runner.current?.dir
+            val v = when (cued) {
+                "L" -> Offset(-1f, 0f)
+                "R" -> Offset(1f, 0f)
+                "U" -> Offset(0f, -1f)   // y grows downward
+                "D" -> Offset(0f, 1f)
+                // No direction in the cue: fall back to where the hand went.
+                else -> if (translation.getDistance() > 1f) translation else predicted
+            }
             val len = maxOf(1f, v.getDistance())
             flung = Flung(
                 block = src,

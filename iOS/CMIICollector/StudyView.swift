@@ -374,10 +374,28 @@ struct StudyView: View {
             // Thrown, but not onto anything: a flick discards the top card. It
             // leaves along the direction it was thrown rather than blinking out
             // of existence, so the throw has a visible consequence.
-            let len = max(1, hypot(predicted.width, predicted.height))
+            // The card leaves along the CUED direction - the way the arrow on
+            // screen points - not along the exact angle the finger took. The
+            // arrow and the card then agree, and the animation is the same
+            // every time rather than being at the mercy of a hand's wobble.
+            // `predicted` still decides WHETHER it was a throw.
+            let cued = runner.current?.dir
+            let v: CGSize = {
+                switch cued {
+                case "L": return CGSize(width: -1, height: 0)
+                case "R": return CGSize(width: 1, height: 0)
+                case "U": return CGSize(width: 0, height: -1)   // y grows downward
+                case "D": return CGSize(width: 0, height: 1)
+                default:
+                    // No direction in the cue: fall back to where the hand went.
+                    return hypot(translation.width, translation.height) > 1
+                        ? translation : predicted
+                }
+            }()
+            let len = max(1, hypot(v.width, v.height))
             flung = (src, animal,
                      CGPoint(x: f.midX + translation.width, y: f.midY + translation.height),
-                     CGSize(width: predicted.width / len, height: predicted.height / len))
+                     CGSize(width: v.width / len, height: v.height / len))
             flight = 0
             // The row is written at the release, so the timing in the file is
             // the gesture's and not the animation's.
