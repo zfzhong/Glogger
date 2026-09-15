@@ -377,6 +377,10 @@ private fun Board(
                             block = b, live = isLive, target = isTarget, flashing = isFlash,
                             hover = isHover,
                             big = big, verb = if (isLive) live?.displayVerb else null,
+                            // Only where the direction is part of the task: a
+                            // drag or a flick moves the card somewhere, a tap
+                            // does not.
+                            dir = if (isLive && live?.revealsCard == true) live.dir else null,
                             animals = animalsOf(b), state = stateOf(b),
                             onState = { onState(b, it) },
                             onEvent = { onEvent(b, it) },
@@ -451,6 +455,8 @@ private fun Cell(
     block: Int, live: Boolean, target: Boolean, flashing: Boolean, big: Int,
     hover: Boolean = false,
     verb: String?,
+    /** "L", "R", "U" or "D" on a directional scene, else null. */
+    dir: String? = null,
     animals: List<String>, state: DeckState,
     onState: (DeckState) -> Unit,
     onEvent: (DeckEvent) -> Unit,
@@ -496,6 +502,34 @@ private fun Cell(
             },
         contentAlignment = Alignment.Center
     ) {
+        // The cue names a direction in words; this puts it on the board. The
+        // arrow sits against the edge the card is meant to travel toward, so
+        // the participant does not have to map "right" onto the layout while
+        // the clock runs.
+        if (live && dir != null) {
+            val glyph = when (dir) {
+                "L" -> "\u2190"; "R" -> "\u2192"; "U" -> "\u2191"; "D" -> "\u2193"
+                else -> ""
+            }
+            // The card is nearly as tall as the cell but much narrower, so
+            // there is room either side of it and almost none above or below.
+            // An up arrow at TopCenter lands behind the card and is simply not
+            // seen; kept in the side margin it stays clear, and its height in
+            // the cell still says which way.
+            val where = when (dir) {
+                "L" -> Alignment.CenterStart
+                "R" -> Alignment.CenterEnd
+                "U" -> Alignment.TopEnd
+                else -> Alignment.BottomEnd
+            }
+            if (glyph.isNotEmpty())
+                Text(glyph,
+                     fontSize = (if (big >= 4) 34 else if (big == 3) 46 else 64).sp,
+                     fontWeight = FontWeight.Bold,
+                     color = accent,
+                     modifier = Modifier.align(where).padding(horizontal = 10.dp))
+        }
+
         Column(horizontalAlignment = Alignment.CenterHorizontally,
                verticalArrangement = Arrangement.spacedBy(if (big >= 4) 6.dp else 14.dp)) {
             Box(Modifier.graphicsLayer { scaleX = scale; scaleY = scale }

@@ -454,6 +454,21 @@ struct StudyView: View {
         return t.toRow == r && t.toCol == c
     }
 
+    /// Which edge of the cell the direction arrow sits against.
+    private func directionCorner(_ t: Trial?) -> Alignment {
+        guard let d = t?.dir, t?.revealsCard == true else { return .center }
+        // The card is nearly as tall as the cell but much narrower, so there is
+        // room either side of it and almost none above or below. An up arrow at
+        // .top lands behind the card and is simply not seen; kept in the side
+        // margin it stays clear, and its height in the cell still says which way.
+        switch d {
+        case "L": return .leading
+        case "R": return .trailing
+        case "U": return .topTrailing
+        default:  return .bottomTrailing
+        }
+    }
+
     private func isFlashing(_ r: Int, _ c: Int) -> Bool {
         guard let t = runner.current, runner.phase == .gap else { return false }
         // The flash acknowledges a scene that was acted on. A waiting or
@@ -569,6 +584,22 @@ struct StudyView: View {
                 }
             }
             .padding(pad)
+        }
+        // The cue names a direction in words; this puts it on the board. The
+        // arrow sits against the edge the card is meant to travel toward, so
+        // the participant does not have to map "right" onto the layout while
+        // the clock runs. Only where the direction is part of the task: a drag
+        // or a flick moves the card somewhere, a tap does not.
+        .overlay(alignment: directionCorner(live ? runner.current : nil)) {
+            if live, let t = runner.current, t.revealsCard, let d = t.dir,
+               let glyph = ["L": "←", "R": "→", "U": "↑", "D": "↓"][d] {
+                Text(glyph)
+                    .font(.system(size: big >= 4 ? 34 : (big == 3 ? 46 : 64),
+                                  weight: .bold))
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.horizontal, 10)
+                    .allowsHitTesting(false)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(.easeOut(duration: 0.15), value: live)
