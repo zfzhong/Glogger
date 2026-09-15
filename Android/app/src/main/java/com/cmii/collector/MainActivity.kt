@@ -354,7 +354,8 @@ class MainActivity : ComponentActivity() {
             serverClockOffsetMs = server.clockOffsetMs,
             serverClockMeasured = server.clockKnown, joinedLateMs = joinedLateMs,
             playJson = "{}", screenWidthPx = sw, screenHeightPx = sh,
-            densityDpi = resources.displayMetrics.densityDpi))
+            densityDpi = resources.displayMetrics.densityDpi,
+            density = resources.displayMetrics.density))
     }
 
     private fun begin(play: Play, joinedLateMs: Int) {

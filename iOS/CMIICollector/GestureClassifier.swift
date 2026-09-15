@@ -11,6 +11,18 @@
 import Foundation
 import CoreGraphics
 
+/// Bumped whenever a threshold or a classification rule changes.
+///
+/// It goes into session.json so a `type` column can be interpreted later.
+/// Without it, two sessions recorded a month apart carry the same word "swipe"
+/// against different rules and nothing in the data says so — and the rules have
+/// already changed twice this month.
+///
+///  1  original: longPress 500, moveDist 10, flingVel 420; hold shown at the
+///     platform's own long-press timeout (iOS 0.35s, Android system setting).
+///  2  hold pinned to 500ms on both platforms.
+let gestureSpecVersion = 2
+
 struct GestureThresholds {
     var longPressMs: Double = 500
     var moveDist: Double = 10        // points; getevent used 40 raw units
@@ -26,6 +38,18 @@ struct GestureThresholds {
     var pinchDelta: Double = 20      // points
     var rotateDeg: Double = 15
     static let `default` = GestureThresholds()
+
+    /// For session.json, so the label can be reinterpreted offline.
+    var asDictionary: [String: Any] {
+        ["spec_version": gestureSpecVersion,
+         "units": "points",
+         "density": 1.0,
+         "long_press_ms": longPressMs,
+         "move_dist": moveDist,
+         "fling_vel": flingVel,
+         "pinch_delta": pinchDelta,
+         "rotate_deg": rotateDeg]
+    }
 }
 
 struct GestureRecord {

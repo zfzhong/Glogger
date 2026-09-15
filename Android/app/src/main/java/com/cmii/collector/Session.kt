@@ -31,7 +31,9 @@ data class SessionMeta(
     val playJson: String = "{}",
     val screenWidthPx: Int = 0,
     val screenHeightPx: Int = 0,
-    val densityDpi: Int = 0
+    val densityDpi: Int = 0,
+    /** Display density, for turning the pixel columns in the CSVs into points. */
+    val density: Float = 1f
 ) {
     fun toJson(sessionName: String, play: Play): String {
         val o = JSONObject()
@@ -44,6 +46,11 @@ data class SessionMeta(
         o.put("screen_px", "${screenWidthPx}x${screenHeightPx}")
         o.put("density_dpi", densityDpi)
         o.put("app", "GestureLogger")
+        o.put("app_build", BuildConfig.GIT_SHA)
+        // The rules that produced the `type` column in _gestures.csv. Recorded
+        // because the label is only meaningful against the thresholds in force
+        // when it was written, and those are not frozen.
+        o.put("classifier", GestureThresholds().scaled(density).toJson(density))
         o.put("preset", "server:" + play.name)
         o.put("participant", participant)
         o.put("study", studyName)

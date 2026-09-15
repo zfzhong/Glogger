@@ -16,6 +16,14 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "0.1"
+
+        // Stamped into session.json, so every recording can be tied back to the
+        // code that produced it. Gesture behaviour has changed several times;
+        // without this a session cannot say which rules it was recorded under.
+        val sha = providers.exec {
+            commandLine("git", "rev-parse", "--short", "HEAD")
+        }.standardOutput.asText.map { it.trim() }.getOrElse("unknown")
+        buildConfigField("String", "GIT_SHA", "\"$sha\"")
     }
 
     buildTypes {
@@ -30,7 +38,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_1_8
     }
     kotlinOptions { jvmTarget = "1.8" }
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; buildConfig = true }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.8" }
     packaging { resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" } }
 }

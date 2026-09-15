@@ -278,8 +278,19 @@ final class Recorder: ObservableObject {
             "session": sessionName,
             "platform": "ios",
             "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev",
+            "app_build": Bundle.main.infoDictionary?["GitSHA"] as? String ?? "unknown",
             "device_model": UIDevice.current.model,
             "system_version": UIDevice.current.systemVersion,
+            // Android already records screen_px and density_dpi. iOS reports
+            // touches in points, so this is not needed to read the CSVs - but
+            // without it there is no way to convert to physical units, or to
+            // compare reach distance against a tablet of a different size.
+            "screen_pt": "\(Int(UIScreen.main.bounds.width))x\(Int(UIScreen.main.bounds.height))",
+            "native_scale": UIScreen.main.nativeScale,
+            // The rules that produced the `type` column in _gestures.csv.
+            // Recorded because the label is only meaningful against the
+            // thresholds in force when it was written, and those are not frozen.
+            "classifier": GestureThresholds.default.asDictionary,
             "preset": preset,
             "seed": String(play.seed),
             "play_name": play.name,

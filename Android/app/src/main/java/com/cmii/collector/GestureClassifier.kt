@@ -28,6 +28,21 @@ import kotlin.math.hypot
  * different digitiser. Recalibrate from Android strokes before reading anything
  * into the swipe-versus-scroll split here.
  */
+/**
+ * Bumped whenever a threshold or a classification rule changes.
+ *
+ * It goes into session.json so a `type` column can be interpreted later. Without
+ * it, two sessions recorded a month apart carry the same word "swipe" against
+ * different rules and nothing in the data says so - and the rules have already
+ * changed twice this month.
+ *
+ *  1  original: longPress 500, moveDist 10, flingVel 420 (iOS points, Android
+ *     pixels scaled by density); hold shown at the platform's own long-press
+ *     timeout (iOS 0.35s, Android system setting).
+ *  2  hold pinned to 500ms on both platforms.
+ */
+const val GESTURE_SPEC_VERSION = 2
+
 data class GestureThresholds(
     val longPressMs: Double = 500.0,
     val moveDist: Double = 10.0,      // pixels, once scaled
@@ -44,6 +59,18 @@ data class GestureThresholds(
      * velocity limits move. On a 2x tablet 420 pt/s becomes 840 px/s, which is
      * the same physical hand speed.
      */
+    /** For session.json, so the label can be reinterpreted offline. */
+    fun toJson(density: Float): org.json.JSONObject = org.json.JSONObject().apply {
+        put("spec_version", GESTURE_SPEC_VERSION)
+        put("units", "pixels")
+        put("density", density)
+        put("long_press_ms", longPressMs)
+        put("move_dist", moveDist)
+        put("fling_vel", flingVel)
+        put("pinch_delta", pinchDelta)
+        put("rotate_deg", rotateDeg)
+    }
+
     fun scaled(density: Float) = copy(
         moveDist = moveDist * density,
         flingVel = flingVel * density,
