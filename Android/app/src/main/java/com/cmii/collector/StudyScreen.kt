@@ -16,8 +16,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.boundsInParent
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -137,6 +139,13 @@ private fun CardBoard(runner: TrialRunner, waitingText: String) {
         return (0 until 3).map { pool[(block * 3 + it) % pool.size] }
     }
     fun stateOf(b: Int) = decks[b] ?: DeckState()
+
+    // Where the carried card is right now, in the same root space the cell
+    // frames are recorded in. One expression, used by both the drawing and the
+    // hit test, so the card cannot be drawn somewhere it would not land.
+    val carriedAt: Offset? = carry?.let { (src, off) ->
+        frames[src]?.let { Offset(it.center.x + off.x, it.center.y + off.y) }
+    }
     fun topOf(b: Int) = topAnimalOf(deckAnimals(b), stateOf(b))
 
     fun deckEvent(b: Int, e: DeckEvent) =
@@ -145,6 +154,8 @@ private fun CardBoard(runner: TrialRunner, waitingText: String) {
     /** Which block a release landed in, in the grid's coordinate space. */
     fun blockAt(p: Offset): Int? =
         frames.entries.firstOrNull { it.value.contains(p) }?.key
+
+    val hovered: Int? = carriedAt?.let { blockAt(it) }?.takeIf { it != carry?.first }
 
     fun endCarry(src: Int, translation: Offset, predicted: Offset) {
         carry = null
@@ -218,6 +229,8 @@ private fun CardBoard(runner: TrialRunner, waitingText: String) {
                   onDragChanged = { b, off -> carry = b to off },
                   onDragEnded = { b, tr, pred -> endCarry(b, tr, pred) },
                   carried = carry,
+                  carriedAt = carriedAt,
+                  hovered = hovered,
                   topOf = ::topOf,
                   showsFaceOf = { stateOf(it).showsFace })
             when {
@@ -265,9 +278,14 @@ private fun Board(
     onDragChanged: (Int, Offset) -> Unit,
     onDragEnded: (Int, Offset, Offset) -> Unit,
     carried: Pair<Int, Offset>?,
+    carriedAt: Offset?,          // where the card is now, in root space
+    hovered: Int?,               // the block it would drop on
     topOf: (Int) -> String,
     showsFaceOf: (Int) -> Boolean
 ) {
+    // The board's own origin, so a root-space cell position can be turned back
+    // into a position inside this Box.
+    var origin by remember { mutableStateOf(Offset.Zero) }
     val gap = if (rows * cols > 9) 10.dp else 16.dp
     val live = runner.current.takeIf {
         runner.phase == TrialRunner.Phase.CUED || runner.phase == TrialRunner.Phase.SETTLING
@@ -278,7 +296,8 @@ private fun Board(
     val big = max(rows, cols)
     val density = LocalDensity.current
 
-    Box(Modifier.fillMaxSize().alpha(if (dimmed) 0.18f else 1f)) {
+    Box(Modifier.fillMaxSize().alpha(if (dimmed) 0.18f else 1f)
+               .onGloballyPositioned { origin = it.positionInRoot() }) {
         Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(gap)) {
             for (r in 0 until rows) {
                 Row(Modifier.fillMaxWidth().weight(1f),
@@ -294,8 +313,12 @@ private fun Board(
                                        live.toRow == r && live.toCol == c
                         val isFlash = flashing != null &&
                                       flashing.row == r && flashing.col == c
+                        // Where the card would land if the finger lifted now.
+                        // Without it a drag is a guess until it is released.
+                        val isHover = hovered == b && carrying != b
                         Cell(
                             block = b, live = isLive, target = isTarget, flashing = isFlash,
+                            hover = isHover,
                             big = big, verb = if (isLive) live?.displayVerb else null,
                             animals = animalsOf(b), state = stateOf(b),
                             onState = { onState(b, it) },
@@ -311,33 +334,22 @@ private fun Board(
         }
 
         // The card under the finger, drawn above every block so it can pass over
-        // them instead of being clipped by its own cell.
-        if (carried != null) {
-            val (b, off) = carried
-            Box(Modifier.fillMaxSize()) {
-                CarriedCard(block = b, animal = topOf(b), faceUp = showsFaceOf(b),
-                            offset = off, big = big, density = density)
+        // them instead of being clipped by its own cell. It starts exactly where
+        // the card it replaces was sitting: a card that jumps to the middle of
+        // the board on the first millimetre of movement does not read as having
+        // been picked up.
+        if (carried != null && carriedAt != null) {
+            val (b, _) = carried
+            val side = cardSideFor(big)
+            val w = with(density) { side.toPx() }
+            val h = w * 1.35f
+            val x = (carriedAt.x - origin.x - w / 2f).toInt()
+            val y = (carriedAt.y - origin.y - h / 2f).toInt()
+            Box(Modifier.align(Alignment.TopStart).offset { IntOffset(x, y) }) {
+                CardFace(back = DeckBack.forBlock(b), faceUp = showsFaceOf(b),
+                         animal = topOf(b), cardSize = side, lifted = true)
             }
         }
-    }
-}
-
-@Composable
-private fun CarriedCard(
-    block: Int, animal: String, faceUp: Boolean, offset: Offset, big: Int,
-    density: androidx.compose.ui.unit.Density
-) {
-    val side = cardSideFor(big)
-    Box(Modifier.fillMaxSize()) {
-        CardFace(
-            back = DeckBack.forBlock(block), faceUp = faceUp, animal = animal,
-            cardSize = side, lifted = true,
-            modifier = Modifier
-                .align(Alignment.Center)
-                .graphicsLayer {
-                    translationX = offset.x
-                    translationY = offset.y
-                })
     }
 }
 
@@ -359,6 +371,7 @@ private fun cardSideFor(big: Int): Dp = when {
 @Composable
 private fun Cell(
     block: Int, live: Boolean, target: Boolean, flashing: Boolean, big: Int,
+    hover: Boolean = false,
     verb: String?,
     animals: List<String>, state: DeckState,
     onState: (DeckState) -> Unit,
@@ -374,12 +387,16 @@ private fun Cell(
     val accent = MaterialTheme.colorScheme.primary
 
     val fill = when {
+        // Hover wins over every other state while a card is in the air: what
+        // matters at that moment is where it will land.
+        hover -> accent.copy(alpha = 0.22f)
         flashing -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.18f)
         live -> accent.copy(alpha = 0.16f)
         target -> Color(0xFF2E7D32).copy(alpha = 0.12f)
         else -> Color.Gray.copy(alpha = 0.10f)
     }
     val stroke = when {
+        hover -> accent
         flashing -> MaterialTheme.colorScheme.onSurfaceVariant
         live -> accent
         target -> Color(0xFF2E7D32)
@@ -392,10 +409,13 @@ private fun Cell(
             .clip(RoundedCornerShape(radius))
             .background(fill)
             .border(
-                width = if (live || flashing) 6.dp else if (target) 5.dp else 2.dp,
+                width = if (hover) 6.dp else if (live || flashing) 6.dp
+                        else if (target) 5.dp else 2.dp,
                 color = stroke, shape = RoundedCornerShape(radius))
             .padding(pad)
-            .onGloballyPositioned { onFrame(it.boundsInParent()) },
+            .onGloballyPositioned {
+                onFrame(Rect(it.positionInRoot(), it.size.toSize()))
+            },
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally,
