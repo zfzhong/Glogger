@@ -405,7 +405,12 @@ private fun Board(
                             animals = animalsOf(b), state = stateOf(b),
                             onState = { onState(b, it) },
                             onEvent = { onEvent(b, it) },
-                            carrying = carrying == b,
+                            // The deck keeps the card until the flight ends,
+                            // so that the next card does not appear early - but
+                            // it must not DRAW it, or there are two copies and
+                            // the one sitting still reads as the card snapping
+                            // back to the deck.
+                            carrying = carrying == b || flung?.block == b,
                             onFrame = { onFrame(b, it) },
                             onDragChanged = { onDragChanged(b, it) },
                             onDragEnded = { tr, pr -> onDragEnded(b, tr, pr) },
@@ -421,7 +426,12 @@ private fun Board(
         // the board on the first millimetre of movement does not read as having
         // been picked up.
         // A thrown card, on its way out along the direction it was thrown.
-        if (flung != null) {
+        //
+        // `flight` is a single animator reused between throws, and on the frame
+        // where `flung` is set it still holds 1.0 from the last one - drawing
+        // then would flash the card at the far end before it starts. Skipping
+        // that frame costs nothing: snapTo(0) lands before the next.
+        if (flung != null && flight < 1f) {
             val side = cardSideFor(big)
             val w = with(density) { side.toPx() }
             val h = w * 1.35f

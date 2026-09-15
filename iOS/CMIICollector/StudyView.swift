@@ -557,7 +557,11 @@ struct StudyView: View {
                         live: live,
                         interactive: live,
                         cardSize: max(40, side),
-                        carrying: carry?.block == b,
+                        // The deck keeps the card until the flight ends, so
+                        // the next card does not appear early - but it must not
+                        // DRAW it, or there are two copies and the one sitting
+                        // still reads as the card snapping back to the deck.
+                        carrying: carry?.block == b || flung?.block == b,
                         state: Binding(
                             get: { decks[b] ?? DeckState() },
                             set: { decks[b] = $0 }),
