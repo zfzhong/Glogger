@@ -184,6 +184,16 @@ struct CardDeckView: View {
     /// does nothing.
     let interactive: Bool
     let cardSize: CGFloat
+    /// Identity of the card on top: which card, in which scene. When it changes
+    /// the turn and the circle start over instead of animating.
+    ///
+    /// Without it the source block of a successful drag played a flip: the card
+    /// had been face up to be dragged, the drop set the deck face down again,
+    /// and the animation read as the card turning back over - contradicting the
+    /// fact that it had just gone to another block. Nothing is turning over
+    /// there. The card left, and a different card, which was always face down,
+    /// is now on top.
+    let cardKey: Int
     /// True while this deck's top card is being carried; the card is drawn by the
     /// grid overlay instead, so the original is hidden rather than duplicated.
     var carrying: Bool = false
@@ -225,6 +235,7 @@ struct CardDeckView: View {
                             cardSize: cardSize, lifted: live)
                     .animation(.easeInOut(duration: turnSeconds), value: turn)
                     .opacity(carrying ? 0 : 1)
+                    .id(cardKey)
 
                 // Hold's reveal: the face laid over the back, masked to a circle
                 // that grows from the centre. A second card rather than a mask on
@@ -242,6 +253,7 @@ struct CardDeckView: View {
                     .opacity(carrying ? 0 : 1)
                     .animation(.easeOut(duration: irisSeconds), value: irisOpen)
                     .allowsHitTesting(false)
+                    .id(cardKey)
             }
             .contentShape(Rectangle())
             .allowsHitTesting(interactive)

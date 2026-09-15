@@ -2,6 +2,7 @@ package com.cmii.collector
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -126,8 +127,18 @@ private fun CardBoard(runner: TrialRunner, waitingText: String) {
     // trial 2.
     val decks = remember { mutableStateMapOf<Int, DeckState>() }
     var carry by remember { mutableStateOf<Pair<Int, Offset>?>(null) }
+
+    // A drag that fell short, on its way back to the block it came from.
+    //
+    // It used to just vanish from under the finger and reappear in the deck,
+    // which said nothing: a drop that missed and a drop that was never made
+    // looked identical. Travelling home says the card was picked up and did not
+    // get there.
+    var homing by remember { mutableStateOf<Pair<Int, Offset>?>(null) }  // block, from
+    val home = remember { Animatable(1f) }   // 1 at the release point, 0 back in the deck
+
     val frames = remember { mutableStateMapOf<Int, Rect>() }
-    LaunchedEffect(runner.index) { decks.clear(); carry = null }
+    LaunchedEffect(runner.index) { decks.clear(); carry = null; homing = null }
 
     // A drag needs the participant to know WHICH card is being moved, so the
     // card to be dragged is turned face up as the cue appears.
@@ -162,7 +173,10 @@ private fun CardBoard(runner: TrialRunner, waitingText: String) {
     // frames are recorded in. One expression, used by both the drawing and the
     // hit test, so the card cannot be drawn somewhere it would not land.
     val carriedAt: Offset? = carry?.let { (src, off) ->
-        frames[src]?.let { Offset(it.center.x + off.x, it.center.y + off.y) }
+        // While it is going home the finger is no longer setting the offset;
+        // the animation is, running the release point back down to nothing.
+        val at = homing?.let { (_, from) -> from * home.value } ?: off
+        frames[src]?.let { Offset(it.center.x + at.x, it.center.y + at.y) }
     }
     fun topOf(b: Int) = topAnimalOf(deckAnimals(b), stateOf(b))
 
@@ -173,7 +187,11 @@ private fun CardBoard(runner: TrialRunner, waitingText: String) {
     fun blockAt(p: Offset): Int? =
         frames.entries.firstOrNull { it.value.contains(p) }?.key
 
-    val hovered: Int? = carriedAt?.let { blockAt(it) }?.takeIf { it != carry?.first }
+    // Nothing is hovered once the card has been released: a card on its way home
+    // would otherwise light up every block it passed over, offering a drop that
+    // is no longer on the table.
+    val hovered: Int? = if (homing != null) null
+                        else carriedAt?.let { blockAt(it) }?.takeIf { it != carry?.first }
 
     // A card that has been thrown and is still leaving. Held apart from the
     // deck state because the deck must not lose the card until the animation
@@ -182,8 +200,8 @@ private fun CardBoard(runner: TrialRunner, waitingText: String) {
     var flung by remember { mutableStateOf<Flung?>(null) }
 
     fun endCarry(src: Int, translation: Offset, predicted: Offset) {
-        carry = null
-        val f = frames[src] ?: return
+        val f = frames[src]
+        if (f == null) { carry = null; return }
         val end = Offset(f.center.x + translation.x, f.center.y + translation.y)
         val st = stateOf(src)
         val animal = topAnimalOf(deckAnimals(src), st)
@@ -191,6 +209,7 @@ private fun CardBoard(runner: TrialRunner, waitingText: String) {
         val depth = deckAnimals(src).size
 
         if (target != null && target != src) {
+            carry = null
             // Landed on another block: the card moves there.
             decks[src] = st.copy(
                 discarded = min(st.discarded + 1, max(0, depth - 1)), faceUp = false)
@@ -202,6 +221,7 @@ private fun CardBoard(runner: TrialRunner, waitingText: String) {
                                         reveal = RevealStyle.FLIP)
             runner.cardDropped(src, target, animal)
         } else if (isFlick(predicted)) {
+            carry = null
             // Thrown, but not onto anything: a flick discards the top card. It
             // leaves along the direction it was thrown rather than blinking out
             // of existence, so the throw has a visible consequence.
@@ -234,7 +254,27 @@ private fun CardBoard(runner: TrialRunner, waitingText: String) {
                 from = Offset(f.center.x + translation.x, f.center.y + translation.y),
                 dir = Offset(v.x / len, v.y / len))
             runner.cardDropped(src, null, animal)
+        } else {
+            // Picked up and put down short of anywhere. The card goes back.
+            //
+            // It also gets a row. This branch used to write nothing at all, so
+            // _deck.csv could not tell a drag that was attempted and fell short
+            // from a drag that was never attempted - and for a study of
+            // gestures those are not the same trial.
+            homing = src to translation
+            runner.cardDropped(src, null, animal)
         }
+    }
+
+    // Home again: the deck goes back to drawing its own card only once the
+    // travelling copy has arrived, or the card would be in two places for a
+    // frame.
+    LaunchedEffect(homing) {
+        if (homing == null) return@LaunchedEffect
+        home.snapTo(1f)
+        home.animateTo(0f, tween(240, easing = FastOutSlowInEasing))
+        homing = null
+        carry = null
     }
 
     // How far the thrown card has travelled, 0 to 1. Read by the board to place
@@ -375,6 +415,14 @@ private fun Board(
     val big = max(rows, cols)
     val density = LocalDensity.current
 
+    // Identity of the card on top of a deck: which card, in which scene. The
+    // scene is in there so the wipe between scenes reads as a new board rather
+    // than as every face-up card turning back over.
+    fun cardKeyOf(b: Int): Int {
+        val s = stateOf(b)
+        return runner.index * 10_000 + s.received.size * 100 + s.discarded
+    }
+
     Box(Modifier.fillMaxSize().alpha(if (dimmed) 0.18f else 1f)
                .onGloballyPositioned { origin = it.positionInRoot() }) {
         Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(gap)) {
@@ -404,6 +452,9 @@ private fun Board(
                             // does not.
                             dir = if (isLive && live?.revealsCard == true) live.dir else null,
                             animals = animalsOf(b), state = stateOf(b),
+                            // Which card is on top, and in which scene. A new
+                            // card must not inherit the last one's flip.
+                            cardKey = cardKeyOf(b),
                             onState = { onState(b, it) },
                             onEvent = { onEvent(b, it) },
                             // The deck keeps the card until the flight ends,
@@ -490,6 +541,7 @@ private fun Cell(
     /** "L", "R", "U" or "D" on a directional scene, else null. */
     dir: String? = null,
     animals: List<String>, state: DeckState,
+    cardKey: Int,
     onState: (DeckState) -> Unit,
     onEvent: (DeckEvent) -> Unit,
     carrying: Boolean,
@@ -571,7 +623,8 @@ private fun Cell(
                     // Only the cued deck responds; off-target touches are still
                     // recorded, they just do not move a card.
                     interactive = live,
-                    cardSize = cardSideFor(big), state = state, carrying = carrying,
+                    cardSize = cardSideFor(big), state = state, cardKey = cardKey,
+                    carrying = carrying,
                     onState = onState, onEvent = onEvent,
                     onDragChanged = onDragChanged, onDragEnded = onDragEnded)
             }
@@ -637,7 +690,7 @@ fun StaticBoard(rows: Int, cols: Int, pool: List<String>) {
                         else (0 until 3).map { pool[(b * 3 + it) % pool.size] }
                     Cell(block = b, live = false, target = false, flashing = false,
                          big = big, verb = null, animals = animals,
-                         state = DeckState(), onState = {}, onEvent = {},
+                         state = DeckState(), cardKey = 0, onState = {}, onEvent = {},
                          carrying = false, onFrame = {}, onDragChanged = {},
                          onDragEnded = { _, _ -> },
                          modifier = Modifier.weight(1f).fillMaxHeight())

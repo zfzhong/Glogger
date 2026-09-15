@@ -13,6 +13,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
@@ -269,6 +270,21 @@ fun CardDeckView(
     interactive: Boolean,
     cardSize: Dp,
     state: DeckState,
+    /**
+     * Identity of the card on top. When it changes, the turn and the circle
+     * start over instead of animating.
+     *
+     * Without it the source block of a successful drag played a flip: the card
+     * had been face up to be dragged, the drop set the deck face down again,
+     * and the animation read as the card turning back over - contradicting the
+     * fact that it had just gone to another block. Nothing is turning over
+     * there. The card left, and a different card, which was always face down,
+     * is now on top.
+     *
+     * It carries the scene number too, so the reset between scenes does not
+     * play a reverse spin on every deck that happened to be face up.
+     */
+    cardKey: Int,
     carrying: Boolean = false,
     onState: (DeckState) -> Unit,
     onEvent: (DeckEvent) -> Unit = {},
@@ -290,26 +306,32 @@ fun CardDeckView(
         state.reveal == RevealStyle.SPIN -> 540f   // a turn and a half
         else -> 180f
     }
-    val spin by animateFloatAsState(
-        targetValue = turn,
-        animationSpec = tween(
-            when (state.reveal) {
-                RevealStyle.SPIN -> SPIN_MS
-                RevealStyle.FAST -> FAST_MS
-                else -> FLIP_MS
-            }),
-        label = "flip")
+    // Both animators live under the card's identity, so a new card starts at
+    // its target rather than travelling there from the old card's pose.
+    val (spin, iris) = key(cardKey) {
+        val s by animateFloatAsState(
+            targetValue = turn,
+            animationSpec = tween(
+                when (state.reveal) {
+                    RevealStyle.SPIN -> SPIN_MS
+                    RevealStyle.FAST -> FAST_MS
+                    else -> FLIP_MS
+                }),
+            label = "flip")
+
+        // Hold's circle, 0 closed and 1 covering the card. It runs back to 0 on
+        // release, so letting go retracts the reveal instead of cutting it.
+        val i by animateFloatAsState(
+            targetValue = if (state.showsFace && state.reveal == RevealStyle.CIRCLE) 1f else 0f,
+            animationSpec = tween(CIRCLE_MS), label = "iris")
+
+        s to i
+    }
 
     // The face swaps whenever the card is edge-on rather than at a fixed angle:
     // rotating past 90 degrees shows the layer mirrored, and with the spin
     // passing 90, 270 and 450 there are three such crossings, not one.
     val faceShowing = cos(spin * PI.toFloat() / 180f) < 0f
-
-    // Hold's circle, 0 closed and 1 covering the card. It runs back to 0 on
-    // release, so letting go retracts the reveal instead of cutting it.
-    val iris by animateFloatAsState(
-        targetValue = if (state.showsFace && state.reveal == RevealStyle.CIRCLE) 1f else 0f,
-        animationSpec = tween(CIRCLE_MS), label = "iris")
 
     Box(modifier.size(cardSize, cardSize * 1.35f), contentAlignment = Alignment.Center) {
         // Cards beneath, peeking out so the stack reads as a stack.

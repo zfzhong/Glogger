@@ -25,6 +25,15 @@ struct StudyView: View {
     @State private var frames: [Int: CGRect] = [:]
     @State private var carry: (block: Int, offset: CGSize)?
 
+    /// A drag that fell short, on its way back to the block it came from.
+    ///
+    /// It used to just vanish from under the finger and reappear in the deck,
+    /// which said nothing: a drop that missed and a drop that was never made
+    /// looked identical. Travelling home says the card was picked up and did
+    /// not get there. `homing` is the release offset; `home` runs 1 down to 0.
+    @State private var homing: (block: Int, from: CGSize)?
+    @State private var home: CGFloat = 1
+
     /// A card that has been thrown and is still leaving. Held apart from the
     /// deck state because the deck must not lose the card until the animation
     /// showing it go has finished, or the next card appears underneath the one
@@ -55,7 +64,9 @@ struct StudyView: View {
                 boardBody
             }
         }
-        .onChange(of: runner.index) { _, _ in decks = [:]; carry = nil; picked = nil }
+        .onChange(of: runner.index) { _, _ in
+            decks = [:]; carry = nil; homing = nil; picked = nil
+        }
         .onChange(of: runner.phase) { _, p in
             if p == .idle { decks = [:] }
             // A drag needs the participant to know WHICH card is being moved,
@@ -329,6 +340,10 @@ struct StudyView: View {
         if let carry, let f = frames[carry.block] {
             let st = decks[carry.block] ?? DeckState()
             let side = min(f.width * 0.66, f.height / 1.35 * 0.82)
+            // While it is going home the finger is no longer setting the offset;
+            // the animation is, running the release point back down to nothing.
+            let off = homing.map { CGSize(width: $0.from.width * home,
+                                          height: $0.from.height * home) } ?? carry.offset
             CardFace(back: DeckBack.forBlock(carry.block),
                      // Face up the instant it lifts, and without a flip
                      // animation: a card in the hand is a card you can see.
@@ -336,11 +351,19 @@ struct StudyView: View {
                      animal: topAnimal(of: carry.block, state: st),
                      cardSize: max(40, side), lifted: true)
                 .frame(width: max(40, side), height: max(40, side) * 1.35)
-                .position(x: f.midX + carry.offset.width,
-                          y: f.midY + carry.offset.height)
+                .position(x: f.midX + off.width, y: f.midY + off.height)
                 .shadow(color: .black.opacity(0.32), radius: 16, x: 0, y: 10)
                 .allowsHitTesting(false)
         }
+    }
+
+    /// Identity of the card on top of a deck: which card, in which scene.
+    ///
+    /// The scene is in there so the wipe between scenes reads as a new board
+    /// rather than as every face-up card turning back over.
+    private func cardKey(_ b: Int) -> Int {
+        let st = decks[b] ?? DeckState()
+        return runner.index * 10_000 + st.received.count * 100 + st.discarded
     }
 
     private func topAnimal(of block: Int, state st: DeckState) -> String {
@@ -355,13 +378,13 @@ struct StudyView: View {
     }
 
     private func endCarry(from src: Int, translation: CGSize, predicted: CGSize) {
-        defer { carry = nil }
-        guard let f = frames[src] else { return }
+        guard let f = frames[src] else { carry = nil; return }
         let end = CGPoint(x: f.midX + translation.width, y: f.midY + translation.height)
         var st = decks[src] ?? DeckState()
         let animal = topAnimal(of: src, state: st)
 
         if let target = blockAt(end), target != src {
+            carry = nil
             // Landed on another block: the card moves there.
             st.discarded = min(st.discarded + 1, max(0, deckAnimals(src).count - 1))
             st.faceUp = false
@@ -375,6 +398,7 @@ struct StudyView: View {
             decks[target] = dst
             runner.cardDropped(from: src, to: target, animal: animal)
         } else if hypot(predicted.width, predicted.height) > 120 {
+            carry = nil
             // Thrown, but not onto anything: a flick discards the top card. It
             // leaves along the direction it was thrown rather than blinking out
             // of existence, so the throw has a visible consequence.
@@ -414,6 +438,23 @@ struct StudyView: View {
                     decks[g.block] = s2
                 }
                 flung = nil
+            }
+        } else {
+            // Picked up and put down short of anywhere. The card goes back.
+            //
+            // It also gets a row. This branch used to write nothing at all, so
+            // _deck.csv could not tell a drag that was attempted and fell short
+            // from a drag that was never attempted - and for a study of
+            // gestures those are not the same trial.
+            runner.cardDropped(from: src, to: nil, animal: animal)
+            homing = (src, translation)
+            home = 1
+            withAnimation(.easeInOut(duration: 0.24)) { home = 0 }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) {
+                // The deck goes back to drawing its own card only once the
+                // travelling copy has arrived, or it is in two places at once.
+                homing = nil
+                carry = nil
             }
         }
     }
@@ -561,6 +602,7 @@ struct StudyView: View {
                         live: live,
                         interactive: live,
                         cardSize: max(40, side),
+                        cardKey: cardKey(b),
                         // The deck keeps the card until the flight ends, so
                         // the next card does not appear early - but it must not
                         // DRAW it, or there are two copies and the one sitting
