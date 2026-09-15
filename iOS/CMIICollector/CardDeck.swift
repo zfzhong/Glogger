@@ -116,6 +116,21 @@ private struct TexturePattern: View {
 
 // MARK: - State
 
+/// How the face arrives. The gesture that revealed the card chooses this, so the
+/// animation is feedback about what the participant actually did: a slow spin
+/// means "that was read as a tap", a snap means "double tap", a spreading circle
+/// means "hold".
+///
+/// Cosmetic only. Nothing downstream reads it - the classifier's verdict and the
+/// deck event are both written at the moment of the gesture, before any of this
+/// has finished playing.
+enum RevealStyle {
+    case flip     // the plain half-turn: drag and flick scenes, and anything else
+    case spin     // tap: one and a half turns, slow enough to watch
+    case fast     // double tap: the same half-turn, snapped
+    case circle   // hold: no rotation, the face spreads from the centre
+}
+
 /// Reset at the start of every scene. Without that the board drifts: a deck that
 /// has been flicked twice looks nothing like a fresh one, and trial 20 stops being
 /// comparable to trial 2.
@@ -124,9 +139,22 @@ struct DeckState: Equatable {
     var faceUp = false         // top card flipped
     var peeking = false        // held down: face shown until release
     var received: [String] = []  // cards dragged onto this deck from elsewhere
+    var reveal: RevealStyle = .flip
 
     var showsFace: Bool { faceUp || peeking }
 }
+
+/// Tap's spin. David asked for a full second; this is shorter on purpose.
+///
+/// A tap scene and a double-tap scene look identical, so a participant unsure
+/// whether the first tap registered taps again - and if the card is still
+/// turning a second later, that second tap lands inside the double-tap window
+/// and the trial is recorded as the wrong gesture. Settling before the window is
+/// comfortably closed removes the reason to tap twice.
+private let spinSeconds  = 0.60
+private let fastSeconds  = 0.12
+private let flipSeconds  = 0.22
+private let irisSeconds  = 0.42
 
 /// What the deck actually did, independent of what the classifier decided.
 enum DeckEvent: String {
@@ -176,7 +204,8 @@ struct CardDeckView: View {
         ZStack {
             // Cards beneath, peeking out so the stack reads as a stack.
             ForEach(0..<max(0, depth - 1), id: \.self) { i in
-                cardShape(faceUp: false, animal: "")
+                CardFace(back: back, faceUp: false, animal: "",
+                         cardSize: cardSize, lifted: live)
                     .offset(x: CGFloat(depth - 1 - i) * 3.5,
                             y: CGFloat(depth - 1 - i) * 3.5)
                     .opacity(0.9)
@@ -192,18 +221,35 @@ struct CardDeckView: View {
             // flick scenes started revealing the card. The same shape is not
             // worth keeping here on the chance SwiftUI differs.
             ZStack {
-                cardShape(faceUp: state.showsFace, animal: topAnimal)
-                    .rotation3DEffect(.degrees(state.showsFace ? 180 : 0),
-                                      axis: (x: 0, y: 1, z: 0))
-                    .animation(.easeInOut(duration: 0.22), value: state.showsFace)
+                TurningCard(angle: turn, back: back, animal: topAnimal,
+                            cardSize: cardSize, lifted: live)
+                    .animation(.easeInOut(duration: turnSeconds), value: turn)
                     .opacity(carrying ? 0 : 1)
+
+                // Hold's reveal: the face laid over the back, masked to a circle
+                // that grows from the centre. A second card rather than a mask on
+                // the first, because the first is the one the rotation and the
+                // carry-alpha act on and this one must do neither.
+                //
+                // Always present, closed to nothing when it is not wanted, so
+                // that opening and closing both animate - an overlay inserted by
+                // an `if` would appear already open.
+                CardFace(back: back, faceUp: true, animal: topAnimal,
+                         cardSize: cardSize, lifted: live)
+                    .mask(Circle()
+                            .frame(width: irisFull, height: irisFull)
+                            .scaleEffect(irisOpen ? 1 : 0.0001))
+                    .opacity(carrying ? 0 : 1)
+                    .animation(.easeOut(duration: irisSeconds), value: irisOpen)
+                    .allowsHitTesting(false)
             }
             .contentShape(Rectangle())
             .allowsHitTesting(interactive)
             .gesture(drag)
-            .onTapGesture(count: 2) { set(.unflip) }        // must precede single
-            .onTapGesture { set(.flip) }
+            .onTapGesture(count: 2) { doubleTapped() }      // must precede single
+            .onTapGesture { tapped() }
             .onLongPressGesture(minimumDuration: 0.35, pressing: { down in
+                if down { state.reveal = .circle }
                 state.peeking = down
                 onEvent(down ? .peek : .peekEnd)
             }, perform: {})
@@ -224,19 +270,80 @@ struct CardDeckView: View {
 
 
 
-    private func set(_ e: DeckEvent) {
-        switch e {
-        case .flip:   guard !state.faceUp else { return }; state.faceUp = true
-        case .unflip: guard state.faceUp else { return }; state.faceUp = false
-        default: return
+    // MARK: Reveal
+
+    /// How far the card turns. `circle` does not turn at all - it stays face
+    /// down and the face spreads over it.
+    private var turn: Double {
+        guard state.showsFace else { return 0 }
+        switch state.reveal {
+        case .circle: return 0
+        case .spin:   return 540      // a turn and a half
+        default:      return 180
         }
-        onEvent(e)
     }
 
-    @ViewBuilder
-    private func cardShape(faceUp: Bool, animal: String) -> some View {
-        CardFace(back: back, faceUp: faceUp, animal: animal,
-                 cardSize: cardSize, lifted: live)
+    private var turnSeconds: Double {
+        switch state.reveal {
+        case .spin: return spinSeconds
+        case .fast: return fastSeconds
+        default:    return flipSeconds
+        }
+    }
+
+    private var irisOpen: Bool { state.reveal == .circle && state.showsFace }
+
+    /// The diameter that covers the card: the diagonal, not the width. A circle
+    /// reaching only the long edges would leave the four corners permanently
+    /// hidden, and the hold is meant to end with the whole card visible.
+    private var irisFull: CGFloat { hypot(cardSize, cardSize * 1.35) }
+
+    private func tapped() {
+        guard !state.faceUp else { return }
+        state.reveal = .spin
+        state.faceUp = true
+        onEvent(.flip)
+    }
+
+    private func doubleTapped() {
+        state.reveal = .fast
+        if state.faceUp {
+            state.faceUp = false
+            onEvent(.unflip)
+        } else {
+            // On a double-tap scene the card starts face down, so the second tap
+            // has to reveal it - otherwise the cued gesture is the one gesture on
+            // the board that does nothing.
+            state.faceUp = true
+            onEvent(.flip)
+        }
+    }
+}
+
+/// The card mid-turn.
+///
+/// Animatable so the face can be chosen from the angle actually on screen rather
+/// than from the destination: rotating past 90 degrees shows the layer mirrored,
+/// and with a spin passing 90, 270 and 450 there are three such crossings. A
+/// view that simply swapped the face when the gesture landed would show the
+/// animal reversed for a third of the spin, and would give it away at once.
+private struct TurningCard: View, Animatable {
+    var angle: Double
+    let back: DeckBack
+    let animal: String
+    let cardSize: CGFloat
+    let lifted: Bool
+
+    var animatableData: Double {
+        get { angle }
+        set { angle = newValue }
+    }
+
+    var body: some View {
+        let showing = cos(angle * .pi / 180) < 0
+        CardFace(back: back, faceUp: showing, animal: animal,
+                 cardSize: cardSize, lifted: lifted, counterRotate: showing)
+            .rotation3DEffect(.degrees(angle), axis: (x: 0, y: 1, z: 0))
     }
 }
 
@@ -248,6 +355,15 @@ struct CardFace: View {
     let animal: String
     let cardSize: CGFloat
     var lifted: Bool = false
+    /// Set when this card is drawn inside a parent turned an odd half-turn about
+    /// y, where everything comes out mirrored. Only the artwork needs undoing -
+    /// the back's texture and the border are symmetric enough not to show it.
+    ///
+    /// It used to be unconditional, which was right for the deck's own card and
+    /// wrong for every standalone copy: the card flying away from a flick and the
+    /// one carried under the finger are not inside a rotated parent, so they were
+    /// drawing their animals back to front.
+    var counterRotate: Bool = false
 
     var body: some View {
         let r = cardSize * 0.11
@@ -262,7 +378,8 @@ struct CardFace: View {
                     .resizable().scaledToFit()
                     .padding(cardSize * 0.18)
                     .foregroundStyle(back.deep)
-                    .rotation3DEffect(.degrees(180), axis: (x: 0, y: 1, z: 0))
+                    .rotation3DEffect(.degrees(counterRotate ? 180 : 0),
+                                      axis: (x: 0, y: 1, z: 0))
             }
             RoundedRectangle(cornerRadius: r)
                 .strokeBorder(faceUp ? back.deep.opacity(0.5) : Color.black.opacity(0.18),

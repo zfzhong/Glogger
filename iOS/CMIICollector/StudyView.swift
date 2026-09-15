@@ -71,6 +71,9 @@ struct StudyView: View {
             if p == .cued, let t = runner.current, t.revealsCard {
                 let b = t.row * grid.cols + t.col
                 var st = decks[b] ?? DeckState()
+                // The plain half-turn: this reveal is the app showing the card,
+                // not feedback on a gesture, so it should not look like one.
+                st.reveal = .flip
                 st.faceUp = true
                 decks[b] = st
             }
@@ -367,6 +370,7 @@ struct StudyView: View {
             dst.received.append(animal)
             // Lands face up. Until it did, a drop that worked and a drop that
             // missed left the board looking exactly the same.
+            dst.reveal = .flip
             dst.faceUp = true
             decks[target] = dst
             runner.cardDropped(from: src, to: target, animal: animal)

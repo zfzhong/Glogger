@@ -142,7 +142,7 @@ private fun CardBoard(runner: TrialRunner, waitingText: String) {
         val t = runner.current
         if (runner.phase == TrialRunner.Phase.CUED && t != null && t.revealsCard) {
             val b = t.row * cols + t.col
-            decks[b] = (decks[b] ?: DeckState()).copy(faceUp = true)
+            decks[b] = (decks[b] ?: DeckState()).copy(faceUp = true, reveal = RevealStyle.FLIP)
         }
     }
 
@@ -198,7 +198,8 @@ private fun CardBoard(runner: TrialRunner, waitingText: String) {
             // The arriving card lands face up. Until it did, a drop that
             // worked and a drop that missed left the board looking exactly
             // the same, so nothing on screen said the card had moved.
-            decks[target] = dst.copy(received = dst.received + animal, faceUp = true)
+            decks[target] = dst.copy(received = dst.received + animal, faceUp = true,
+                                        reveal = RevealStyle.FLIP)
             runner.cardDropped(src, target, animal)
         } else if (isFlick(predicted)) {
             // Thrown, but not onto anything: a flick discards the top card. It

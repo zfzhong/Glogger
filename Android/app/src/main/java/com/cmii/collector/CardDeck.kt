@@ -14,6 +14,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -23,16 +24,22 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.PI
+import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
@@ -79,6 +86,23 @@ data class DeckBack(val hue: Float, val texture: DeckTexture) {
 // MARK: - State
 
 /**
+ * How the face arrives. The gesture that revealed the card chooses this, so the
+ * animation is feedback about what the participant actually did: a slow spin
+ * means "that was read as a tap", a snap means "double tap", a spreading circle
+ * means "hold".
+ *
+ * It is cosmetic only. Nothing downstream reads it - the classifier's verdict
+ * and the deck event are both written at the moment of the gesture, before any
+ * of this has finished playing.
+ */
+enum class RevealStyle {
+    FLIP,    // the plain half-turn: drag and flick scenes, and any other reveal
+    SPIN,    // tap: one and a half turns, slow enough to watch
+    FAST,    // double tap: the same half-turn, snapped
+    CIRCLE   // hold: no rotation, the face spreads from the centre
+}
+
+/**
  * Reset at the start of every scene. Without that the board drifts: a deck that
  * has been flicked twice looks nothing like a fresh one, and trial 20 stops
  * being comparable to trial 2.
@@ -87,10 +111,25 @@ data class DeckState(
     val discarded: Int = 0,           // cards flicked away, revealing the one beneath
     val faceUp: Boolean = false,      // top card flipped
     val peeking: Boolean = false,     // held down: face shown until release
-    val received: List<String> = emptyList()  // cards dragged here from elsewhere
+    val received: List<String> = emptyList(),  // cards dragged here from elsewhere
+    val reveal: RevealStyle = RevealStyle.FLIP
 ) {
     val showsFace: Boolean get() = faceUp || peeking
 }
+
+/**
+ * Tap's spin. David asked for a full second; this is shorter on purpose.
+ *
+ * A tap scene and a double-tap scene look identical, so a participant who is
+ * unsure whether the first tap registered taps again - and if the card is still
+ * turning a second later, that second tap lands inside the double-tap window
+ * and the trial is recorded as the wrong gesture. Settling before the window is
+ * comfortably closed removes the reason to tap twice.
+ */
+private const val SPIN_MS = 600
+private const val FAST_MS = 120
+private const val FLIP_MS = 220
+private const val CIRCLE_MS = 420
 
 /** What the deck actually did, independent of what the classifier decided. */
 enum class DeckEvent(val wire: String) {
@@ -242,12 +281,35 @@ fun CardDeckView(
     val top = topAnimalOf(animals, state)
     val density = LocalDensity.current
 
-    // The flip is drawn rather than animated card-by-card: rotating the Y axis
-    // past 90 degrees would show a mirrored face, so the face swaps at the
-    // halfway point instead.
+    // How far the card turns, and how fast, is chosen by the gesture that
+    // revealed it. CIRCLE does not turn at all - it stays face down and the
+    // face spreads over it, below.
+    val turn = when {
+        !state.showsFace -> 0f
+        state.reveal == RevealStyle.CIRCLE -> 0f
+        state.reveal == RevealStyle.SPIN -> 540f   // a turn and a half
+        else -> 180f
+    }
     val spin by animateFloatAsState(
-        targetValue = if (state.showsFace) 180f else 0f,
-        animationSpec = tween(220), label = "flip")
+        targetValue = turn,
+        animationSpec = tween(
+            when (state.reveal) {
+                RevealStyle.SPIN -> SPIN_MS
+                RevealStyle.FAST -> FAST_MS
+                else -> FLIP_MS
+            }),
+        label = "flip")
+
+    // The face swaps whenever the card is edge-on rather than at a fixed angle:
+    // rotating past 90 degrees shows the layer mirrored, and with the spin
+    // passing 90, 270 and 450 there are three such crossings, not one.
+    val faceShowing = cos(spin * PI.toFloat() / 180f) < 0f
+
+    // Hold's circle, 0 closed and 1 covering the card. It runs back to 0 on
+    // release, so letting go retracts the reveal instead of cutting it.
+    val iris by animateFloatAsState(
+        targetValue = if (state.showsFace && state.reveal == RevealStyle.CIRCLE) 1f else 0f,
+        animationSpec = tween(CIRCLE_MS), label = "iris")
 
     Box(modifier.size(cardSize, cardSize * 1.35f), contentAlignment = Alignment.Center) {
         // Cards beneath, peeking out so the stack reads as a stack.
@@ -267,6 +329,19 @@ fun CardDeckView(
         // gesture; revealing the card on drag and flick scenes set spin to 180
         // and the drag started running backwards. Vertical was always fine -
         // rotationY does not touch y.
+        // Everything the gesture handlers read goes through rememberUpdatedState.
+        //
+        // pointerInput is keyed on the block, so its coroutine keeps running
+        // across recompositions and the lambdas inside it hold whatever `state`
+        // was current when it started - always the fresh deck. The hold showed
+        // it: onLongPress set peeking, and the release then tested a captured
+        // `state` that still said peeking was false, so it neither hid the face
+        // nor wrote peekEnd. The card stayed revealed and the CSV lost half the
+        // pair.
+        val cur by rememberUpdatedState(state)
+        val emit by rememberUpdatedState(onState)
+        val note by rememberUpdatedState(onEvent)
+
         var g: Modifier = Modifier
         if (interactive) {
             g = g
@@ -276,24 +351,34 @@ fun CardDeckView(
                         // immediately would flip before the second tap arrived,
                         // and the unflip would have nothing to undo.
                         onDoubleTap = {
-                            if (state.faceUp) {
-                                onState(state.copy(faceUp = false)); onEvent(DeckEvent.UNFLIP)
+                            if (cur.faceUp) {
+                                emit(cur.copy(faceUp = false, reveal = RevealStyle.FAST))
+                                note(DeckEvent.UNFLIP)
+                            } else {
+                                // On a double-tap scene the card starts face
+                                // down, so the second tap has to reveal it -
+                                // otherwise the cued gesture is the one gesture
+                                // on the board that does nothing.
+                                emit(cur.copy(faceUp = true, reveal = RevealStyle.FAST))
+                                note(DeckEvent.FLIP)
                             }
                         },
                         onTap = {
-                            if (!state.faceUp) {
-                                onState(state.copy(faceUp = true)); onEvent(DeckEvent.FLIP)
+                            if (!cur.faceUp) {
+                                emit(cur.copy(faceUp = true, reveal = RevealStyle.SPIN))
+                                note(DeckEvent.FLIP)
                             }
                         },
                         onLongPress = {
-                            onState(state.copy(peeking = true)); onEvent(DeckEvent.PEEK)
+                            emit(cur.copy(peeking = true, reveal = RevealStyle.CIRCLE))
+                            note(DeckEvent.PEEK)
                         },
                         onPress = {
                             // The face is shown only while held, so the release
                             // has to end it however the press ends.
                             tryAwaitRelease()
-                            if (state.peeking) {
-                                onState(state.copy(peeking = false)); onEvent(DeckEvent.PEEK_END)
+                            if (cur.peeking) {
+                                emit(cur.copy(peeking = false)); note(DeckEvent.PEEK_END)
                             }
                         })
                 }
@@ -319,14 +404,42 @@ fun CardDeckView(
         }
 
         Box(g) {
-            CardFace(back = back, faceUp = state.showsFace, animal = top,
+            CardFace(back = back, faceUp = faceShowing, animal = top,
                      cardSize = cardSize, lifted = live,
                      modifier = Modifier.graphicsLayer {
                          rotationY = spin
                          alpha = if (carrying) 0f else 1f
                          cameraDistance = 14f * density.density
                      })
+
+            // Hold's reveal: the face laid over the back, showing only inside a
+            // circle that grows from the centre. Drawn as a second card rather
+            // than by clipping the first, because the first is the one the
+            // rotation and the carry-alpha act on and this one must do neither.
+            if (iris > 0.001f && !carrying) {
+                CardFace(back = back, faceUp = true, animal = top,
+                         cardSize = cardSize, lifted = live,
+                         modifier = Modifier.clip(Iris(iris)))
+            }
         }
+    }
+}
+
+/**
+ * A circle centred on the card, `f` of the way to covering it.
+ *
+ * The radius runs to half the diagonal, not half the width: a circle that only
+ * reaches the long edges would leave the four corners permanently hidden, and
+ * the hold is meant to end with the whole card visible.
+ */
+private class Iris(private val f: Float) : Shape {
+    override fun createOutline(size: Size, layoutDirection: LayoutDirection,
+                               density: Density): Outline {
+        val r = f * hypot(size.width, size.height) / 2f
+        val c = Offset(size.width / 2f, size.height / 2f)
+        return Outline.Generic(Path().apply {
+            addOval(Rect(Offset(c.x - r, c.y - r), Size(r * 2, r * 2)))
+        })
     }
 }
 
