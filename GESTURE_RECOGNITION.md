@@ -154,6 +154,51 @@ unscored; timeout -> `"0"`; else `observed in acceptedLabels`.
 
 ---
 
+## 4a. Where the code is
+
+A tap travels **two independent paths that never meet**. The board flipping the
+card and the word `tap` appearing in `_gestures.csv` are produced by completely
+separate code. That is deliberate — the deck is app-level ground truth that does
+not depend on the classifier — but it is the thing to understand before reading
+either one.
+
+### Path A — the board responds (layer 1)
+
+| | Android | iOS |
+|---|---|---|
+| tap | `CardDeck.kt:411` `onTap` | `CardDeck.swift:296` -> `:400` `tapped()` |
+| double tap | `CardDeck.kt:398` `onDoubleTap` | `CardDeck.swift:295` -> `:408` `doubleTapped()` |
+| hold | `CardDeck.kt:417` `onLongPress` | `CardDeck.swift:313` `pressing` -> `:379` `armHold()` |
+| press state | `CardDeck.kt:421` `onPress` | `CardDeck.swift:313` `pressing` |
+| flick / drag split | `StudyScreen.kt:201` `endCarry` | `StudyView.swift:366` `endCarry` |
+
+### Path B — the stroke is recorded and labelled (layers 2 and 3)
+
+| Step | Android | iOS |
+|---|---|---|
+| every touch enters | `MainActivity.kt:379` `dispatchTouchEvent` | `TouchLogger.swift:51` `touchesBegan` |
+| fed to the assembler | `Recorder.kt:170-177` | `Recorder.swift:239-243` |
+| stroke finalised | `GestureClassifier.kt:135` `finalizeStroke` | `GestureClassifier.swift` `finalize` |
+| **labelled** | `GestureClassifier.kt:161` `classify` (tap at `:176`) | `GestureClassifier.swift:127` `classify` (tap at `:142`) |
+| handed to the runner | `MainActivity.kt:82` -> `TrialRunner.kt:167` | `ContentView.swift:95` -> `TrialRunner.swift:198` |
+| **verdict** | `TrialRunner.kt:312` `matchOf` | `TrialRunner.swift:316` `score` |
+
+### How much code
+
+| | Android | iOS |
+|---|---|---|
+| `GestureClassifier` | 178 | 144 |
+| `CardDeck` (whole file) | 507 | 494 |
+| `StudyScreen` / `StudyView` (whole file) | 715 | 676 |
+| `TrialRunner` (whole file) | 334 | 382 |
+
+The two `CardDeck` and board files are mostly card drawing, deck textures and
+grid layout. The gesture decisions themselves are roughly 150-200 lines per
+platform, and `classify` — the function that actually names the gesture — is 17
+lines. `tools/gesture_parse.py` is 122 lines for the offline equivalent.
+
+---
+
 ## 5. Divergences and defects
 
 All four are Android-side gaps against iOS, found by reading the two scorers
