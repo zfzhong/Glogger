@@ -159,6 +159,18 @@ private let irisSeconds  = 0.42
 /// acknowledged at once, the release only has to look unhurried.
 private let pressInSeconds  = 0.04
 private let pressOutSeconds = 0.13
+/// How long the finger has to stay down before it counts as a hold.
+///
+/// 0.5s matches Compose's longPressTimeoutMillis, which is what the Pixel uses.
+/// It was 0.35 here, so the same hold became a peek 150ms sooner on the iPad
+/// than on the tablet next to it - a platform difference baked into the timing
+/// of an event the study measures.
+private let holdSeconds = 0.5
+/// A minimumDuration no press will ever reach, so `perform` never fires. A
+/// finite hour rather than .infinity: an infinite TimeInterval goes into
+/// SwiftUI's own deadline arithmetic, and there is no reason to find out what
+/// it does with one.
+private let neverFires: Double = 3600
 
 /// What the deck actually did, independent of what the classifier decided.
 enum DeckEvent: String {
@@ -211,6 +223,8 @@ struct CardDeckView: View {
     /// tablet noticed. It is the one piece of feedback that does not have to
     /// wait to find out which gesture this is, so it fires for all of them.
     @State private var pressed = false
+    /// The pending hold, cancelled if the finger lifts or wanders first.
+    @State private var holdWork: DispatchWorkItem?
     var onDragChanged: (CGSize) -> Void = { _ in }
     var onDragEnded: (CGSize, CGSize) -> Void = { _, _ in }
 
@@ -289,19 +303,32 @@ struct CardDeckView: View {
             // closed it again on release. Session 0909_1215 has thirteen
             // peek/peekEnd pairs from a twenty-scene run, some fifty
             // milliseconds apart: the hold event was recording contact, not
-            // holding. It belongs on `perform`, which is the only callback that
-            // means a hold happened.
-            .onLongPressGesture(minimumDuration: 0.35, pressing: { down in
+            // holding.
+            //
+            // Moving it to `perform` was wrong in the other direction. `perform`
+            // is arbitrated against the drag gesture above, and a DragGesture
+            // with a minimum distance only fails once the finger lifts without
+            // travelling - so the long press could not succeed until release,
+            // and the circle started growing exactly when the hold ended.
+            //
+            // So the hold is timed here instead, and this modifier is kept only
+            // for `pressing`, which reports contact and release immediately and
+            // is not arbitrated. minimumDuration is set past any plausible hold
+            // so `perform` never fires at all: a success would call
+            // `pressing(false)` with the finger still down and drop the press
+            // state mid-hold.
+            .onLongPressGesture(minimumDuration: neverFires, pressing: { down in
                 pressed = down
-                if !down, state.peeking {
-                    state.peeking = false
-                    onEvent(.peekEnd)
+                if down {
+                    armHold()
+                } else {
+                    cancelHold()
+                    if state.peeking {
+                        state.peeking = false
+                        onEvent(.peekEnd)
+                    }
                 }
-            }, perform: {
-                state.reveal = .circle
-                state.peeking = true
-                onEvent(.peek)
-            })
+            }, perform: {})
         }
         .frame(width: cardSize, height: cardSize * 1.35)
         .animation(.easeOut(duration: 0.18), value: state.discarded)
@@ -313,7 +340,13 @@ struct CardDeckView: View {
     /// where the other blocks are.
     private var drag: some Gesture {
         DragGesture(minimumDistance: 14)
-            .onChanged { v in onDragChanged(v.translation) }
+            .onChanged { v in
+                // The finger travelled, so whatever this is, it is not a hold.
+                // `pressing(false)` usually gets here first (the long press
+                // fails at its 10pt maximumDistance) but not on every path.
+                cancelHold()
+                onDragChanged(v.translation)
+            }
             .onEnded { v in onDragEnded(v.translation, v.predictedEndTranslation) }
     }
 
@@ -346,6 +379,23 @@ struct CardDeckView: View {
     /// reaching only the long edges would leave the four corners permanently
     /// hidden, and the hold is meant to end with the whole card visible.
     private var irisFull: CGFloat { hypot(cardSize, cardSize * 1.35) }
+
+    /// Start the clock on a hold. Fires once, at holdSeconds, unless cancelled.
+    private func armHold() {
+        cancelHold()
+        let work = DispatchWorkItem {
+            state.reveal = .circle
+            state.peeking = true
+            onEvent(.peek)
+        }
+        holdWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + holdSeconds, execute: work)
+    }
+
+    private func cancelHold() {
+        holdWork?.cancel()
+        holdWork = nil
+    }
 
     private func tapped() {
         guard !state.faceUp else { return }
