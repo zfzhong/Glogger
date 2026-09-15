@@ -79,6 +79,16 @@ data class Trial(
      */
     val isFreeform: Boolean get() = isOffscreen || isWaiting || isWeb
 
+    /**
+     * Whether this scene should show the card before the gesture.
+     *
+     * A drag and a flick both act on a particular card and move it somewhere -
+     * out of the deck, or off the board - so the participant has to see which
+     * card that is. A tap does not: the card has to start face down or there is
+     * nothing to flip, and the flip is the gesture being measured.
+     */
+    val revealsCard: Boolean get() = isTravelling || type == "swipe"
+
     val promptText: String get() = prompt.orEmpty()
 
     val displayVerb: String

@@ -24,6 +24,13 @@ struct StudyView: View {
     /// above every block and the drop target resolved from where it was released.
     @State private var frames: [Int: CGRect] = [:]
     @State private var carry: (block: Int, offset: CGSize)?
+
+    /// A card that has been thrown and is still leaving. Held apart from the
+    /// deck state because the deck must not lose the card until the animation
+    /// showing it go has finished, or the next card appears underneath the one
+    /// still in the air.
+    @State private var flung: (block: Int, animal: String, at: CGPoint, dir: CGSize)?
+    @State private var flight: CGFloat = 0
     /// Which page a menu-style web scene is currently showing. Nil = the menu.
     @State private var picked: WebSite?
 
@@ -61,7 +68,7 @@ struct StudyView: View {
             // At the cue, not at the start of the scene: a face showing during
             // "Get ready" would name the target a second early, and the
             // participant would have their hand there before the scene began.
-            if p == .cued, let t = runner.current, t.isTravelling {
+            if p == .cued, let t = runner.current, t.revealsCard {
                 let b = t.row * grid.cols + t.col
                 var st = decks[b] ?? DeckState()
                 st.faceUp = true
@@ -293,10 +300,28 @@ struct StudyView: View {
         .coordinateSpace(name: "grid")
         .onPreferenceChange(CellFrameKey.self) { frames = $0 }
         .overlay(alignment: .topLeading) { carriedCard }
+        .overlay(alignment: .topLeading) { flungCard }
     }
 
     /// The card under the finger. Drawn here rather than in its cell so it can
     /// pass over the other blocks instead of being clipped by them.
+    /// The thrown card, on its way out along the direction it was thrown.
+    @ViewBuilder private var flungCard: some View {
+        if let g = flung {
+            let big = max(rows, cols)
+            let side: CGFloat = big >= 4 ? 70 : (big == 3 ? 100 : 150)
+            // Far enough to be gone rather than stopping at the screen edge.
+            let reach: CGFloat = 760
+            CardFace(back: DeckBack.forBlock(g.block), faceUp: true,
+                     animal: g.animal, cardSize: side, lifted: true)
+                .frame(width: side, height: side * 1.35)
+                .position(x: g.at.x + g.dir.width * reach * flight,
+                          y: g.at.y + g.dir.height * reach * flight)
+                .opacity(1 - flight)
+                .allowsHitTesting(false)
+        }
+    }
+
     @ViewBuilder private var carriedCard: some View {
         if let carry, let f = frames[carry.block] {
             let st = decks[carry.block] ?? DeckState()
@@ -346,13 +371,28 @@ struct StudyView: View {
             decks[target] = dst
             runner.cardDropped(from: src, to: target, animal: animal)
         } else if hypot(predicted.width, predicted.height) > 120 {
-            // Thrown, but not onto anything: a flick discards the top card.
-            if st.discarded < deckAnimals(src).count - 1 {
-                st.discarded += 1
-                st.faceUp = false
-                decks[src] = st
-            }
+            // Thrown, but not onto anything: a flick discards the top card. It
+            // leaves along the direction it was thrown rather than blinking out
+            // of existence, so the throw has a visible consequence.
+            let len = max(1, hypot(predicted.width, predicted.height))
+            flung = (src, animal,
+                     CGPoint(x: f.midX + translation.width, y: f.midY + translation.height),
+                     CGSize(width: predicted.width / len, height: predicted.height / len))
+            flight = 0
+            // The row is written at the release, so the timing in the file is
+            // the gesture's and not the animation's.
             runner.cardDropped(from: src, to: nil, animal: animal)
+            withAnimation(.easeIn(duration: 0.30)) { flight = 1 }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.32) {
+                guard let g = flung else { return }
+                var s2 = decks[g.block] ?? DeckState()
+                if s2.discarded < deckAnimals(g.block).count - 1 {
+                    s2.discarded += 1
+                    s2.faceUp = false
+                    decks[g.block] = s2
+                }
+                flung = nil
+            }
         }
     }
 

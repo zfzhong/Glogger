@@ -213,6 +213,14 @@ struct Trial: Codable, Identifiable {
     /// Neither kind of scene cues a gesture on the board, so both run their slot
     /// out on the clock instead of ending on a response.
     var isFreeform: Bool { isOffscreen || isWeb || isWaiting }
+
+    /// Whether this scene should show the card before the gesture.
+    ///
+    /// A drag and a flick both act on a particular card and move it somewhere -
+    /// out of the deck, or off the board - so the participant has to see which
+    /// card that is. A tap does not: the card has to start face down or there
+    /// is nothing to flip, and the flip is the gesture being measured.
+    var revealsCard: Bool { isTravelling || type == "swipe" }
     var promptText: String {
         let p = (prompt ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         return p.isEmpty ? displayVerb : p

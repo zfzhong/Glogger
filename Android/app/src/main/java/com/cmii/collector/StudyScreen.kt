@@ -1,5 +1,6 @@
 package com.cmii.collector
 
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -139,7 +140,7 @@ private fun CardBoard(runner: TrialRunner, waitingText: String) {
     // have their hand there before the scene began.
     LaunchedEffect(runner.index, runner.phase) {
         val t = runner.current
-        if (runner.phase == TrialRunner.Phase.CUED && t != null && t.isTravelling) {
+        if (runner.phase == TrialRunner.Phase.CUED && t != null && t.revealsCard) {
             val b = t.row * cols + t.col
             decks[b] = (decks[b] ?: DeckState()).copy(faceUp = true)
         }
@@ -174,6 +175,12 @@ private fun CardBoard(runner: TrialRunner, waitingText: String) {
 
     val hovered: Int? = carriedAt?.let { blockAt(it) }?.takeIf { it != carry?.first }
 
+    // A card that has been thrown and is still leaving. Held apart from the
+    // deck state because the deck must not lose the card until the animation
+    // that shows it going has finished - otherwise the next card appears
+    // underneath the one still flying away.
+    var flung by remember { mutableStateOf<Flung?>(null) }
+
     fun endCarry(src: Int, translation: Offset, predicted: Offset) {
         carry = null
         val f = frames[src] ?: return
@@ -194,11 +201,37 @@ private fun CardBoard(runner: TrialRunner, waitingText: String) {
             decks[target] = dst.copy(received = dst.received + animal, faceUp = true)
             runner.cardDropped(src, target, animal)
         } else if (isFlick(predicted)) {
-            // Thrown, but not onto anything: a flick discards the top card.
-            if (st.discarded < depth - 1)
-                decks[src] = st.copy(discarded = st.discarded + 1, faceUp = false)
+            // Thrown, but not onto anything: a flick discards the top card. It
+            // leaves along the direction it was thrown rather than blinking out
+            // of existence, so the throw has a visible consequence.
+            val v = if (predicted.getDistance() > 1f) predicted else translation
+            val len = maxOf(1f, v.getDistance())
+            flung = Flung(
+                block = src,
+                animal = animal,
+                from = Offset(f.center.x + translation.x, f.center.y + translation.y),
+                dir = Offset(v.x / len, v.y / len))
             runner.cardDropped(src, null, animal)
         }
+    }
+
+    // How far the thrown card has travelled, 0 to 1. Read by the board to place
+    // and fade it.
+    val flight = remember { Animatable(0f) }
+
+    // The deck loses the card when the card is off screen, not when the finger
+    // lifted - otherwise the next card appears underneath the one still flying
+    // away. The row in _deck.csv was already written at the release, so the
+    // timing in the file is the gesture's and not the animation's.
+    LaunchedEffect(flung) {
+        val f = flung ?: return@LaunchedEffect
+        flight.snapTo(0f)
+        flight.animateTo(1f, tween(300))
+        val depth = deckAnimals(f.block).size
+        val st = stateOf(f.block)
+        if (st.discarded < depth - 1)
+            decks[f.block] = st.copy(discarded = st.discarded + 1, faceUp = false)
+        flung = null
     }
 
     Column(Modifier.fillMaxSize().padding(20.dp),
@@ -250,6 +283,8 @@ private fun CardBoard(runner: TrialRunner, waitingText: String) {
                   onDragEnded = { b, tr, pred -> endCarry(b, tr, pred) },
                   carried = carry,
                   carriedAt = carriedAt,
+                  flung = flung,
+                  flight = flight.value,
                   hovered = hovered,
                   topOf = ::topOf,
                   showsFaceOf = { stateOf(it).showsFace })
@@ -300,6 +335,8 @@ private fun Board(
     carried: Pair<Int, Offset>?,
     carriedAt: Offset?,          // where the card is now, in root space
     hovered: Int?,               // the block it would drop on
+    flung: Flung?,               // a card thrown and still leaving
+    flight: Float,               // how far it has gone, 0 to 1
     topOf: (Int) -> String,
     showsFaceOf: (Int) -> Boolean
 ) {
@@ -358,6 +395,24 @@ private fun Board(
         // the card it replaces was sitting: a card that jumps to the middle of
         // the board on the first millimetre of movement does not read as having
         // been picked up.
+        // A thrown card, on its way out along the direction it was thrown.
+        if (flung != null) {
+            val side = cardSideFor(big)
+            val w = with(density) { side.toPx() }
+            val h = w * 1.35f
+            // Far enough to be gone: the board's own diagonal, so the card
+            // leaves the screen rather than stopping at the edge of it.
+            val reach = with(density) { 760.dp.toPx() }
+            val x = (flung.from.x - origin.x - w / 2f + flung.dir.x * reach * flight).toInt()
+            val y = (flung.from.y - origin.y - h / 2f + flung.dir.y * reach * flight).toInt()
+            Box(Modifier.align(Alignment.TopStart)
+                        .offset { IntOffset(x, y) }
+                        .alpha((1f - flight).coerceIn(0f, 1f))) {
+                CardFace(back = DeckBack.forBlock(flung.block), faceUp = true,
+                         animal = flung.animal, cardSize = side, lifted = true)
+            }
+        }
+
         if (carried != null && carriedAt != null) {
             val (b, _) = carried
             val side = cardSideFor(big)
@@ -525,3 +580,17 @@ fun StaticBoard(rows: Int, cols: Int, pool: List<String>) {
         }
     }
 }
+
+/**
+ * A card that has been thrown and is still leaving.
+ *
+ * Kept outside the deck state on purpose: the deck must not lose the card until
+ * the animation showing it go has finished, or the next card appears underneath
+ * the one still in the air.
+ */
+data class Flung(
+    val block: Int,
+    val animal: String,
+    val from: Offset,
+    val dir: Offset
+)
