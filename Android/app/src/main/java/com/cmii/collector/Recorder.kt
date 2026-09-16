@@ -156,7 +156,12 @@ class Recorder(private val context: Context) {
             val id = ev.getPointerId(pointer)
             val slot = slots.getOrPut(id) { nextSlot++ }
             val kts = "%.6f".format(kernelMs / 1000.0)
-            val xy = if (keyboardUp) "," else "${x.toInt()},${y.toInt()}"
+            // One decimal, not whole pixels. The digitiser reports sub-pixel and
+            // truncating threw away resolution the hardware had already paid
+            // for; path_len is a sum of these differences, so the error
+            // accumulates over a stroke. Matches the iPad, which keeps the same
+            // decimal in _touches_raw.csv.
+            val xy = if (keyboardUp) "," else "%.1f,%.1f".format(x, y)
             write(raw, "$wall,$kts,$slot,$phase,$xy," +
                     "%.3f,%.3f,0,%s".format(ev.getPressure(pointer),
                                             ev.getTouchMajor(pointer),

@@ -199,15 +199,41 @@ final class Recorder: ObservableObject {
 
     // MARK: - Touch ingestion (called from TouchRecognizer on the main thread)
 
-    func ingest(_ t: UITouch) {
+    /// One UIKit callback, expanded to every sample the digitiser actually took.
+    ///
+    /// `coalescedTouches` holds the samples between this callback and the last
+    /// one — the intermediate positions UIKit does not deliver individually. The
+    /// last element is the same touch that was handed to us, so only that one
+    /// carries the real phase; the rest are movement in between and are written
+    /// as `moved`. A `began` is never expanded: a sample written before its own
+    /// down event would put the assembler out of order.
+    ///
+    /// Identity stays with the DELIVERED touch. The coalesced samples are
+    /// separate UITouch objects, so keying the slot table off them would hand
+    /// every sample its own finger id.
+    func ingest(_ t: UITouch, event: UIEvent? = nil) {
+        let samples: [UITouch] = {
+            guard t.phase != .began,
+                  let all = event?.coalescedTouches(for: t), !all.isEmpty else { return [t] }
+            return all
+        }()
+        for (i, s) in samples.enumerated() {
+            record(t, sample: s, phase: i == samples.count - 1 ? t.phase : .moved)
+        }
+    }
+
+    private func record(_ t: UITouch, sample s: UITouch, phase: UITouch.Phase) {
         let wall = Int(Date().timeIntervalSince1970 * 1000)
-        let kts = t.timestamp                          // seconds since boot (monotonic)
-        let p = t.location(in: nil)                    // window coordinates, points
+        let kts = s.timestamp                          // seconds since boot (monotonic)
+        // preciseLocation resolves below the point grid where the digitiser can;
+        // elsewhere it equals location. The raw file keeps the decimal - rounding
+        // to whole points threw away resolution the hardware had already paid for.
+        let p = s.preciseLocation(in: nil)             // window coordinates, points
         let x = Double(p.x), y = Double(p.y)
         let id = ObjectIdentifier(t)
 
         let phaseStr: String
-        switch t.phase {
+        switch phase {
         case .began:      phaseStr = "began"
         case .moved:      phaseStr = "moved"
         case .stationary: phaseStr = "stationary"
@@ -217,21 +243,21 @@ final class Recorder: ObservableObject {
         }
 
         let slot = touchSlot[id] ?? { let s = nextSlot; nextSlot += 1; touchSlot[id] = s; return s }()
-        let xy = keyboardUp ? "," : "\(Int(x.rounded())),\(Int(y.rounded()))"
+        let xy = keyboardUp ? "," : "\(fmt1(x)),\(fmt1(y))"
         append(rawFile, "\(wall),\(fmt6(kts)),\(slot),\(phaseStr),"
                + xy + ","
-               + "\(fmt3(Double(t.force))),\(fmt3(Double(t.majorRadius))),\(studyPhase),"
+               + "\(fmt3(Double(s.force))),\(fmt3(Double(s.majorRadius))),\(studyPhase),"
                + (keyboardUp ? "1" : "0"))
 
         if keyboardUp {
             // The assembler would put x0,y0,x1,y1 into _gestures.csv, which is the
             // same disclosure by another route. Timing survives in the raw file.
-            if t.phase == .began { nTaps += 1; onTouchDown?(wall) }
-            if t.phase == .ended || t.phase == .cancelled { touchSlot[id] = nil }
+            if phase == .began { nTaps += 1; onTouchDown?(wall) }
+            if phase == .ended || phase == .cancelled { touchSlot[id] = nil }
             return
         }
 
-        switch t.phase {
+        switch phase {
         case .began:
             append(tapsFile, "\(wall),\(fmt6(kts)),\(Int(x.rounded())),\(Int(y.rounded()))")
             nTaps += 1
@@ -339,6 +365,7 @@ final class Recorder: ObservableObject {
     }
 }
 
+private func fmt1(_ v: Double) -> String { String(format: "%.1f", v) }
 private func fmt6(_ v: Double) -> String { String(format: "%.6f", v) }
 private func fmt3(_ v: Double) -> String { String(format: "%.3f", v) }
 private func csvEscape(_ s: String) -> String {

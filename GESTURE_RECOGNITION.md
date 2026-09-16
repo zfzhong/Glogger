@@ -284,6 +284,52 @@ it times its own; it still does for the double-tap window.
 
 ---
 
+## 5a. Provenance recorded with every session
+
+`session.json` carries the rules the labels were produced under, because
+`_gestures.csv` stores the features alongside the label and so can be relabelled
+offline — but only if you know what the stored label meant.
+
+```json
+"app_build": "c244acc",
+"classifier": { "spec_version": 2, "units": "pixels", "density": 2,
+                "long_press_ms": 500, "move_dist": 20,
+                "fling_vel": 840, "pinch_delta": 40, "rotate_deg": 15 }
+```
+
+The thresholds are the density-scaled ones actually in force, in the units the
+CSV is written in. `GESTURE_SPEC_VERSION` lives beside the thresholds in
+`GestureClassifier`, so changing one without bumping it means editing adjacent
+lines. Android stamps the git short SHA from Gradle; iOS reads a `GitSHA`
+Info.plist key that nothing sets yet and records `"unknown"` until a Run Script
+build phase is added.
+
+## 5b. Touch sampling
+
+`_touches_raw.csv` is every sample the digitiser produced, not every callback
+the UI framework delivered. Both platforms now read the full rate:
+
+- **Android** — `MotionEvent.historySize` with `getHistoricalX/Y/EventTime`,
+  written before the current sample so the stroke is in order.
+- **iOS** — `event.coalescedTouches(for:)`. Identity stays with the delivered
+  touch, because coalesced samples are separate `UITouch` objects and keying the
+  slot table off them would give every sample its own finger id. A `began` is
+  never expanded; on other phases only the last sample carries the real phase.
+
+Positions keep one decimal on both platforms, and iOS uses `preciseLocation`.
+`path_len` is a sum of successive differences, so truncation accumulates across
+a stroke.
+
+This was one-sided until 2026-09-16. iOS dropped the `UIEvent` and logged one
+sample per callback: session `0909_1215` holds 3.6 KB of raw touch from the iPad
+against 17.4 KB from the Pixel over the same twenty scenes, and one iPad swipe
+recorded `path_len 133.3` against `disp 133.7` — a path shorter than the
+displacement, which a real finger cannot produce. Under-sampled path means
+under-measured `mean_vel`, which pushes an iPad swipe below `flingVel` and
+labels it `scroll` where the Pixel would say `swipe`. **Sessions recorded before
+that date under-measure iPad path length and velocity**; `app_build` and
+`spec_version` are what distinguish them.
+
 ## 6. Open
 
 - Recalibrate `flingVel` on Android hardware. The current value comes from four
