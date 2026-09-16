@@ -28,6 +28,7 @@ struct ExperimentListView: View {
     private let clock = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     @State private var failure = ""
     @State private var showConfig = false
+    @State private var showFiles = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -41,6 +42,9 @@ struct ExperimentListView: View {
         }
         .task { await refresh() }
         .onReceive(clock) { tick = $0 }
+        .sheet(isPresented: $showFiles) {
+            SessionFilesView(config: config)
+        }
         .sheet(isPresented: $showConfig) {
             ConfigView(config: config, server: server, recorder: recorder)
                 .onDisappear { recorder.advertiseName = config.advertiseName }
@@ -54,6 +58,12 @@ struct ExperimentListView: View {
             HStack(alignment: .firstTextBaseline) {
                 Text("Choose an experiment").font(.largeTitle.weight(.semibold))
                 Spacer()
+                // Sessions are never deleted, so the tablet holds the only
+                // copy of anything that failed to upload. This is the way back
+                // to one.
+                Button { showFiles = true } label: {
+                    Label("Files", systemImage: "folder")
+                }
                 Button { showConfig = true } label: {
                     Label("Configure", systemImage: "gearshape")
                 }

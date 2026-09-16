@@ -35,7 +35,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var uploader: Uploader
     private val runner = TrialRunner()
 
-    private enum class Screen { LIST, CONFIG, ARMED, RUNNING, SUMMARY }
+    private enum class Screen { LIST, CONFIG, FILES, ARMED, RUNNING, SUMMARY }
     private var screen by mutableStateOf(Screen.LIST)
     private var scenesTotal by mutableIntStateOf(0)
     private var uploadState by mutableStateOf("")
@@ -132,6 +132,7 @@ class MainActivity : ComponentActivity() {
                             status = status, busy = busy, failure = failure,
                             onRefresh = { scope.launch { refresh() } },
                             onConfigure = { screen = Screen.CONFIG },
+                            onFiles = { screen = Screen.FILES },
                             loadingId = loadingId,
                             onStart = { e ->
                                 scope.launch {
@@ -180,6 +181,10 @@ class MainActivity : ComponentActivity() {
                             config = config, beacon = beacon,
                             deviceLine = deviceLine(),
                             onDone = { screen = Screen.LIST; scope.launch { refresh() } })
+
+                        Screen.FILES -> FilesScreen(
+                            root = filesDir, config = config,
+                            onBack = { screen = Screen.LIST })
 
                         Screen.ARMED -> {
                             val p = armedPlay

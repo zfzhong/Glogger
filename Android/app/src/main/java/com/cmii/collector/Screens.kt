@@ -48,6 +48,7 @@ fun ExperimentListScreen(
     failure: String,
     onRefresh: () -> Unit,
     onConfigure: () -> Unit,
+    onFiles: () -> Unit,
     onStart: (ExperimentInfo) -> Unit,
     loadingId: Int?
 ) {
@@ -62,6 +63,9 @@ fun ExperimentListScreen(
                 Spacer(Modifier.weight(1f))
                 if (busy) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
                 else TextButton(onClick = onRefresh) { Text("Refresh") }
+                // Sessions are never deleted, so the tablet holds the only copy
+                // of anything that failed to upload. This is the way back to one.
+                TextButton(onClick = onFiles) { Text("Files") }
                 TextButton(onClick = onConfigure) { Text("Configure") }
             }
 
