@@ -297,6 +297,49 @@ it times its own; it still does for the double-tap window.
 
 ---
 
+## 5c. Sampling rate, measured
+
+Measured from `0915_2058` (iPad, 8 travelling strokes) and `0909_1215` (Pixel).
+
+| | iPad Pro 11" | Pixel Tablet |
+|---|---|---|
+| median interval | 8.35 ms | 7.0 ms |
+| implied rate | **120 Hz** | **~143 Hz** |
+| timestamp resolution | microseconds | 1 ms |
+
+**The digitiser clock is fixed; the reporting is not.** On the iPad every
+interval that is not 8.3 ms is an exact multiple of it — 8.3, 16.6, 25.1, 33.3 —
+so the scan is a steady 120 Hz grid (ProMotion) with slots that produced no
+event. Android's 1 ms timestamp resolution hides the same structure.
+
+**A finger that is not moving produces no samples at all.** Splitting the iPad's
+intervals by length makes this unambiguous:
+
+```
+intervals of ~8.3 ms : 315 of them, finger travelling  857 pt/s
+intervals over 12 ms :  18 of them, finger travelling   16 pt/s
+```
+
+Every long gap is a pause. The largest in that session is 208 ms — twenty-five
+consecutive empty slots — and it is a stationary finger, not a dropped sample.
+
+Three consequences:
+
+1. **Row index is not time.** Use `kernel_ts`. Spacing varies by an order of
+   magnitude inside a single stroke.
+2. **A pause deflates `mean_vel`.** It adds duration and no path, and `mean_vel
+   = path / duration` is the flick/drag threshold — so a flick preceded by a
+   hesitation reads slower than the same flick without one. `max_vel` does not
+   have this weakness, which strengthens the case for it in "Open" below.
+3. **The two tablets sample at different rates.** 120 Hz against ~143 Hz means
+   the Pixel measures more of the same path than the iPad does, on top of the
+   units difference. Any cross-platform comparison of `path_len` or `mean_vel`
+   has to account for both.
+
+Touch and inertial data are on different clocks: touch is event-driven at
+120/143 Hz, the IMU is a steady 100 Hz on iOS and 50 Hz on Android. `kernel_ts`
+is the monotonic clock they share, and it is what makes them alignable.
+
 ## 5a. Provenance recorded with every session
 
 `session.json` carries the rules the labels were produced under, because
