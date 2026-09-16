@@ -267,7 +267,20 @@ Two more, of a different kind:
    class of mistake `GestureThresholds.scaled` exists to prevent, missed because
    `isFlick` lives in `CardDeck.kt` rather than in the classifier.
 
-6. **`tools/gesture_parse.py` is on different numbers.** `D_MOVE = 40`,
+6. **The release point used to be left out of `path_len`** (fixed 2026-09-16,
+   spec 3). `ended()` moved the finger to the release coordinate without adding
+   that segment to the path, so `disp` counted it and `path` did not - producing
+   strokes whose path was shorter than the straight line between their own
+   endpoints. Three of eight travelling strokes in session `0915_2058`, every
+   one a flick. Replaying that session's raw touches through both versions:
+   worst case `path 197.2 -> 231.5` and `mean_vel 1480 -> 1738`, a 17%
+   under-measurement, and zero strokes left with `path < disp`. No label flipped
+   in that session because those strokes were well clear of `flingVel`, but 17%
+   is more than enough to flip a borderline one. `tools/gesture_parse.py` never
+   had it: its `x1,y1` come from the last `pos()` call, which is also the last
+   point added to the path.
+
+7. **`tools/gesture_parse.py` is on different numbers.** `D_MOVE = 40`,
    `V_FLING = 800`, against the apps' 10 and 420. The Python works in raw
    `getevent` device units from adb captures, so they are not directly
    comparable — but the header comment claiming all three implementations agree

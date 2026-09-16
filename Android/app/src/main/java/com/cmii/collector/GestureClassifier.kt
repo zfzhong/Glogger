@@ -40,8 +40,11 @@ import kotlin.math.hypot
  *     pixels scaled by density); hold shown at the platform's own long-press
  *     timeout (iOS 0.35s, Android system setting).
  *  2  hold pinned to 500ms on both platforms.
+ *  3  the release point closes path and pts, not just the position. Before
+ *     this, path_len and max_vel were missing the last segment of every
+ *     stroke and mean_vel was under-measured, worst on short fast ones.
  */
-const val GESTURE_SPEC_VERSION = 2
+const val GESTURE_SPEC_VERSION = 3
 
 data class GestureThresholds(
     val longPressMs: Double = 500.0,
@@ -153,7 +156,25 @@ class StrokeAssembler(private val thr: GestureThresholds = GestureThresholds()) 
     /** Returns the finished stroke when the LAST finger lifts, else null. */
     fun ended(id: Int, x: Double, y: Double, kts: Double): GestureRecord? {
         upKts = kts
-        data[id]?.let { it.x = x; it.y = y }
+        // The release point closes the path as well as the displacement.
+        //
+        // It used to only move the finger, so `disp` - measured first point to
+        // last - counted the final segment while `path` stopped at the last
+        // MOVE. That produced strokes whose path was shorter than the straight
+        // line between their own endpoints, which is geometrically impossible:
+        // three of eight travelling strokes in session 0915_2058, every one of
+        // them a flick.
+        //
+        // It matters because mean_vel is path/duration and is what separates a
+        // flick from a drag. The dropped segment is a larger share of a short
+        // stroke, so the under-measurement was worst on exactly the gestures
+        // the threshold has to judge. max_vel lost it too, and on a flick the
+        // last segment is often the fastest part.
+        data[id]?.let {
+            it.path += hypot(x - it.x, y - it.y)
+            it.x = x; it.y = y
+            it.pts.add(Triple(x, y, kts))
+        }
         active.remove(id)
         if (active.isNotEmpty()) return null
         return finalizeStroke()

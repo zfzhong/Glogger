@@ -21,7 +21,10 @@ import CoreGraphics
 ///  1  original: longPress 500, moveDist 10, flingVel 420; hold shown at the
 ///     platform's own long-press timeout (iOS 0.35s, Android system setting).
 ///  2  hold pinned to 500ms on both platforms.
-let gestureSpecVersion = 2
+///  3  the release point closes path and pts, not just the position. Before
+///     this, path_len and max_vel were missing the last segment of every
+///     stroke and mean_vel was under-measured, worst on short fast ones.
+let gestureSpecVersion = 3
 
 struct GestureThresholds {
     var longPressMs: Double = 500
@@ -118,7 +121,23 @@ final class StrokeAssembler {
 
     func ended(_ id: ObjectIdentifier, _ x: Double, _ y: Double, _ kts: Double) {
         upKts = kts
-        if var f = data[id] { f.x = x; f.y = y; data[id] = f }
+        // The release point closes the path as well as the displacement.
+        //
+        // It used to only move the finger, so `disp` - measured first point to
+        // last - counted the final segment while `path` stopped at the last
+        // move. That produced strokes whose path was shorter than the straight
+        // line between their own endpoints, which is geometrically impossible:
+        // three of eight travelling strokes in session 0915_2058, every one of
+        // them a flick. mean_vel is path/duration and is what separates a flick
+        // from a drag, and the dropped segment is a larger share of a short
+        // stroke - so the error was worst on exactly the gestures the threshold
+        // has to judge.
+        if var f = data[id] {
+            f.path += hypot(x - f.x, y - f.y)
+            f.x = x; f.y = y
+            f.pts.append((x, y, kts))
+            data[id] = f
+        }
         active.remove(id)
         if active.isEmpty { finalizeStroke() }
     }
